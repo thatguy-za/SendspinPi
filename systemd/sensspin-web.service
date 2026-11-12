@@ -1,0 +1,14 @@
+[Unit]
+Description=SensSpinPi web UI
+After=network.target NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+WorkingDirectory=/opt/sensspin/app
+ExecStart=/usr/bin/python3 -m sensspin
+Restart=always
+RestartSec=3
+# Runs as root: needs port 80, nmcli, apt and systemctl.
+
+[Install]
+WantedBy=multi-user.target

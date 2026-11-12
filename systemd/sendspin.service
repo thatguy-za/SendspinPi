@@ -1,0 +1,16 @@
+[Unit]
+Description=Sendspin audio player (daemon)
+After=network-online.target sound.target
+Wants=network-online.target
+ConditionPathExists=/opt/sensspin/bin/sendspin
+
+[Service]
+User=sendspin
+SupplementaryGroups=audio
+Environment=HOME=/var/lib/sendspin
+ExecStart=/opt/sensspin/bin/sendspin daemon
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,158 @@
+:root{
+  --bg:#f6f5f2;--surface:#fff;--sunk:#efede8;--line:#e4e1da;--fg:#1c1b19;--mut:#6f6b63;
+  --accent:#0f766e;--accent-fg:#fff;--ink:#1c1b19;--ink-fg:#fff;
+  --ok:#15803d;--warn:#b45309;--bad:#b91c1c;--log-bg:#1c1b19;--log-fg:#d9d5cc;
+  --r:10px;--shadow:0 1px 2px rgba(28,27,25,.05)
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#141413;--surface:#1c1c1a;--sunk:#252522;--line:#2e2e2a;--fg:#ecebe6;--mut:#9a968c;
+  --accent:#2dd4bf;--accent-fg:#06201c;--ink:#ecebe6;--ink-fg:#141413;
+  --ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--log-bg:#0e0e0d;--log-fg:#cfcbc2;--shadow:none}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:14.5px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;letter-spacing:-.005em}
+
+/* layout */
+/* Mobile first: top bar + fixed bottom tab bar. Desktop sidebar is the enhancement below. */
+.shell{min-height:100vh;padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+.side{display:contents}
+.brand{position:sticky;top:0;z-index:5;display:flex;align-items:baseline;gap:8px;padding:12px 16px;background:var(--bg);border-bottom:1px solid var(--line);line-height:1.2}
+.brand b{font-size:15px;font-weight:650;letter-spacing:-.02em}
+.brand span{font-size:12px;color:var(--mut);margin-right:auto}
+.side nav{position:fixed;left:0;right:0;bottom:0;z-index:10;display:flex;background:var(--surface);border-top:1px solid var(--line);padding:4px 4px calc(4px + env(safe-area-inset-bottom))}
+.side button.nav{flex:1;min-width:0;min-height:52px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;background:none;border:0;color:var(--mut);padding:4px 2px;border-radius:8px;cursor:pointer;font:inherit;font-size:10.5px;font-weight:550}
+.side button.nav svg{width:21px;height:21px;flex:none;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.side button.nav.on{color:var(--accent)}
+.side button.nav.logout{position:fixed;top:8px;right:8px;z-index:6;flex:none;min-height:36px;flex-direction:row;font-size:13px;padding:4px 10px}
+.side .spacer{display:none}
+.content{padding:20px 16px 32px}
+.page-title{font-size:22px;font-weight:650;letter-spacing:-.025em;margin:0 0 16px}
+
+@media(min-width:760px){
+  .shell{display:flex;padding-bottom:0}
+  .side{display:flex;flex-direction:column;gap:2px;width:224px;flex:none;padding:20px 12px;border-right:1px solid var(--line);position:sticky;top:0;height:100vh}
+  .brand{position:static;display:block;padding:4px 10px 18px;border:0;background:none}
+  .brand span{display:block}
+  .side nav{position:static;display:flex;flex-direction:column;gap:2px;background:none;border:0;padding:0}
+  .side button.nav{flex:none;min-height:0;flex-direction:row;justify-content:flex-start;gap:10px;font-size:14.5px;padding:8px 10px;text-align:left}
+  .side button.nav svg{width:17px;height:17px}
+  .side button.nav:hover{background:var(--sunk);color:var(--fg)}
+  .side button.nav.on{background:var(--sunk);color:var(--fg)}
+  .side button.nav.logout{position:static;order:3;min-height:0;padding:8px 10px;font-size:14.5px}
+  .side nav{order:1}.side .spacer{display:block;flex:1;order:2}
+  .content{flex:1;min-width:0;max-width:780px;padding:32px 36px 64px}
+  .page-title{font-size:24px;margin-bottom:20px}
+}
+
+/* surfaces */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:20px;margin-bottom:16px;box-shadow:var(--shadow)}
+h2{margin:0 0 4px;font-size:16px;font-weight:620;letter-spacing:-.015em}
+h3{margin:22px 0 8px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--mut)}
+p{color:var(--mut);margin:4px 0 14px}
+.mut{color:var(--mut)}
+.card>p:first-of-type{margin-top:2px}
+
+/* rows */
+.row{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line);min-height:44px}
+h2+.row,h3+.row{border-top:0}
+.row>span:last-child{color:var(--mut);text-align:right;word-break:break-word}
+.row.pick{cursor:pointer;border-radius:6px}
+.row.pick:hover{background:var(--sunk)}
+label.row.pick{color:var(--fg);font-size:inherit;padding-left:6px;padding-right:6px}
+
+/* controls */
+button.b,a.b{display:inline-flex;align-items:center;justify-content:center;gap:6px;background:var(--ink);color:var(--ink-fg);border:1px solid var(--ink);border-radius:8px;padding:8px 16px;min-height:44px;font:inherit;font-weight:550;cursor:pointer;margin:3px 6px 3px 0;text-decoration:none;transition:opacity .12s,background .12s}
+button.b:hover{opacity:.88}
+button.b.sec{background:var(--surface);color:var(--fg);border-color:var(--line)}
+button.b.sec:hover{background:var(--sunk);opacity:1}
+button.b.bad{background:var(--bad);border-color:var(--bad);color:#fff}
+button.b.sec.bad{background:var(--surface);color:var(--bad);border-color:var(--line)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input,select{width:100%;min-height:44px;font-size:16px;padding:9px 12px;background:var(--surface);color:var(--fg);border:1px solid var(--line);border-radius:8px;font:inherit;margin:4px 0 12px}
+input:focus,select:focus{border-color:var(--accent)}
+input[type=checkbox],input[type=radio]{width:18px;height:18px;min-height:0;vertical-align:middle;margin:0 10px 0 0;accent-color:var(--accent)}
+label{display:block;font-size:13px;font-weight:500;color:var(--mut)}
+
+/* status pills */
+.tag{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:550;padding:2px 9px;border-radius:99px;background:var(--sunk);color:var(--fg)}
+.tag::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--mut)}
+.tag.ok::before{background:var(--ok)}.tag.warn::before{background:var(--warn)}.tag.bad::before{background:var(--bad)}
+
+/* logs + messages */
+pre{background:var(--log-bg);color:var(--log-fg);padding:12px 14px;border-radius:8px;max-height:300px;overflow:auto;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word;margin:10px 0}
+.err{color:var(--bad)}.okmsg{color:var(--ok)}
+.callout{padding:10px 12px;border-radius:8px;background:var(--sunk);border-left:3px solid var(--warn);color:var(--fg);margin:10px 0}
+.code{font:600 17px ui-monospace,Menlo,monospace;padding:12px;background:var(--sunk);border-radius:8px;text-align:center;margin:8px 0;word-break:break-word}
+
+/* wizard progress */
+.steps{display:flex;gap:6px;margin:0 0 18px}
+.steps i{flex:1;height:3px;border-radius:2px;background:var(--line)}
+.steps i.on{background:var(--accent)}
+
+/* stat grid */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}
+.grid div{padding:10px 12px;font-weight:550;word-break:break-word;box-shadow:0 0 0 .5px var(--line)}
+.grid small{display:block;color:var(--mut);font-size:12px;font-weight:450}
+
+/* login */
+@media(min-width:760px){button.b,a.b{min-height:38px}input,select{min-height:40px;font-size:14.5px}}
+.login{max-width:360px;margin:12vh 16px 0;padding:24px}
+@media(min-width:760px){.login{margin:14vh auto 0;padding:28px}}
+.login h2{font-size:20px;letter-spacing:-.025em;margin-bottom:2px}
+.login .b{width:100%;margin-top:4px;padding:10px}
+.login-wrap{padding:0 16px}
+
+/* ---- refinement pass: lighter, tighter, less boxy ---- */
+body{font-size:15px}
+.card{border-color:transparent;background:var(--surface);border-radius:14px;padding:16px;margin-bottom:12px;box-shadow:none}
+@media(prefers-color-scheme:light){.card{border-color:var(--line)}}
+h2{font-size:15px;margin-bottom:2px}
+.eyebrow{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--accent);margin-bottom:2px}
+.card>.row:first-child,.card>.grid+*{border-top:0}
+.row{padding:9px 0;min-height:40px}
+.row>span:last-child{font-size:14px}
+button.b,a.b{min-height:40px;padding:6px 14px;font-weight:500;border-radius:9px;margin:2px 4px 2px 0}
+button.b:active{transform:scale(.98)}
+button.b.sec{background:transparent}
+input,select{min-height:42px;border-radius:9px;margin:4px 0 10px;transition:border-color .12s}
+.page-title{font-size:20px;margin-bottom:12px}
+.content{padding:14px 12px 24px}
+.brand{padding:10px 14px}
+.side nav{padding-top:2px}
+.side button.nav{min-height:48px;gap:2px;font-weight:500;position:relative;transition:color .12s}
+.side button.nav.on::before{content:"";position:absolute;top:0;width:22px;height:2px;border-radius:2px;background:var(--accent)}
+pre{border-radius:9px;font-size:11.5px;max-height:240px}
+.steps{margin-bottom:12px}
+@media(min-width:760px){
+  .card{padding:20px;margin-bottom:14px}
+  .content{padding:32px 36px 64px}
+  .page-title{font-size:24px;margin-bottom:18px}
+  .side button.nav.on::before{display:none}
+  button.b,a.b{min-height:36px}
+  input,select{min-height:38px}
+}
+
+/* ---- hamburger drawer (mobile) + icon logout ---- */
+.brand{height:49px;align-items:center;gap:10px}
+.brand b{margin-right:0}
+.burger{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;margin-left:-8px;background:none;border:0;border-radius:8px;color:var(--fg);cursor:pointer;padding:0}
+.burger:hover{background:var(--sunk)}
+.burger svg,.side button.nav.logout svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.side button.nav.logout{width:40px;height:40px;min-height:0;padding:0;justify-content:center;flex-direction:row;top:5px;right:8px;border-radius:8px}
+.scrim{display:none}
+@media(max-width:759.98px){
+  .shell{padding-bottom:0}
+  .side nav{top:49px;bottom:0;left:0;right:auto;width:264px;flex-direction:column;gap:2px;padding:10px;border-top:0;border-right:1px solid var(--line);transform:translateX(-102%);transition:transform .2s ease;visibility:hidden}
+  .shell.open .side nav{transform:none;visibility:visible}
+  .side nav button.nav{flex:none;flex-direction:row;justify-content:flex-start;gap:12px;min-height:44px;padding:10px 12px;font-size:15px}
+  .side nav button.nav svg{width:19px;height:19px}
+  .side nav button.nav.on{background:var(--sunk);color:var(--fg)}
+  .side nav button.nav.on::before{display:none}
+  .shell.open .scrim{display:block;position:fixed;inset:49px 0 0 0;z-index:9;background:rgba(0,0,0,.35)}
+}
+@media(min-width:760px){
+  .burger{display:none}
+  .brand{height:auto}
+  .side button.nav.logout{position:static;width:auto;height:auto;padding:8px 10px;justify-content:flex-start}
+}
