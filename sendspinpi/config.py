@@ -7,7 +7,7 @@ import secrets
 import tempfile
 import threading
 
-CONF_DIR = os.environ.get("SENSSPIN_CONF_DIR", "/etc/sensspin")
+CONF_DIR = os.environ.get("SENDSPINPI_CONF_DIR", "/etc/sendspinpi")
 CONF_FILE = os.path.join(CONF_DIR, "config.json")
 _lock = threading.Lock()
 ALPHABET = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -18,7 +18,9 @@ DEFAULTS = {
     "port": 80,
     "setup_complete": False,
     "hotspot_enabled": True,
-    "hotspot_ssid": "SensSpin-Setup",
+    "bluetooth_auto_reconnect": True,
+    "selfupdate_auto": False,
+    "hotspot_ssid": "SendspinPi-Setup",
     "hotspot_psk": "",
 }
 
@@ -70,13 +72,17 @@ def update(**kw):
     return cfg
 
 
-def init(reset_password=False):
-    """Create config on first install. Returns (username, password|None, hotspot_psk)."""
+def init(reset_password=False, password=None):
+    """Create config on first install. Returns (username, generated_password|None, hotspot_psk).
+    A user-supplied password is stored but never returned."""
     cfg = load()
     pw = None
     if reset_password or not cfg["password_hash"]:
-        pw = random_password()
-        cfg["password_hash"] = hash_password(pw)
+        if password and len(password) >= 8:
+            cfg["password_hash"] = hash_password(password)
+        else:
+            pw = random_password()
+            cfg["password_hash"] = hash_password(pw)
         cfg["username"] = cfg["username"] or "admin"
     if not cfg["hotspot_psk"]:
         cfg["hotspot_psk"] = random_password(10)

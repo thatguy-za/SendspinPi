@@ -5,7 +5,7 @@ import time
 from . import config
 from .util import run
 
-HOTSPOT_CON = "SensSpin-Setup"
+HOTSPOT_CON = "SendspinPi-Setup"
 HOTSPOT_IP = "10.42.0.1"
 _scan_cache = []
 _last_connect = {"state": "idle", "message": ""}

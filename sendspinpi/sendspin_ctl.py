@@ -8,11 +8,11 @@ import urllib.request
 from .util import run
 
 SERVICE = "sendspin"
-BASE = os.environ.get("SENSSPIN_BASE", "/opt/sensspin")
-UV = os.environ.get("SENSSPIN_UV", "/usr/local/bin/uv")
+BASE = os.environ.get("SENDSPINPI_BASE", "/opt/sendspinpi")
+UV = os.environ.get("SENDSPINPI_UV", "/usr/local/bin/uv")
 BIN = os.path.join(BASE, "bin", "sendspin")
 SENDSPIN_USER = "sendspin"
-SENDSPIN_HOME = os.environ.get("SENSSPIN_SENDSPIN_HOME", "/var/lib/sendspin")
+SENDSPIN_HOME = os.environ.get("SENDSPINPI_SENDSPIN_HOME", "/var/lib/sendspin")
 SETTINGS = os.path.join(SENDSPIN_HOME, ".config", "sendspin", "settings-daemon.json")
 UV_ENV = {
     "UV_TOOL_DIR": os.path.join(BASE, "uv-tools"),
@@ -99,6 +99,16 @@ def write_settings(**kw):
     except (LookupError, PermissionError, OSError):
         pass
     return s
+
+
+HOOK = os.path.join(BASE, "hooks", "set-volume.sh")
+
+
+def set_audio_device(dev):
+    """Set the output device. Bluetooth (BlueALSA) outputs get the volume hook so
+    Sendspin's volume drives the speaker; other outputs drop it."""
+    return write_settings(audio_device=dev,
+                          hook_set_volume=HOOK if dev.startswith("bluealsa") else "")
 
 
 def info():

@@ -91,7 +91,7 @@ pre{background:var(--log-bg);color:var(--log-fg);padding:12px 14px;border-radius
 .steps i.on{background:var(--accent)}
 
 /* stat grid */
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}
 .grid div{padding:10px 12px;font-weight:550;word-break:break-word;box-shadow:0 0 0 .5px var(--line)}
 .grid small{display:block;color:var(--mut);font-size:12px;font-weight:450}
 
@@ -156,3 +156,65 @@ pre{border-radius:9px;font-size:11.5px;max-height:240px}
   .brand{height:auto}
   .side button.nav.logout{position:static;width:auto;height:auto;padding:8px 10px;justify-content:flex-start}
 }
+
+/* bluetooth device rows */
+.row.dev{flex-wrap:wrap;align-items:flex-start}
+.row.dev>div:first-child{min-width:0;flex:1 1 140px;word-break:break-word}
+.actions{display:flex;flex-wrap:wrap;gap:4px;align-items:center;justify-content:flex-end;margin-left:auto}
+.actions .tag{margin-right:4px}
+
+/* option rows (automatic updates) */
+.opt{display:flex;gap:12px;align-items:flex-start;padding:10px 0;cursor:pointer;color:var(--fg);font-size:inherit}
+.opt input{flex:none;margin:3px 0 0}
+.opt b{display:block;font-weight:550}
+.opt small{display:block;color:var(--mut);font-size:13px;font-weight:400}
+.opt-time{margin:0 0 6px 30px;color:var(--mut)}
+
+/* tidier system page */
+.divider{margin-top:16px;padding-top:6px;border-top:1px solid var(--line)}
+details.more{margin:6px 0}
+details.more>summary{cursor:pointer;color:var(--mut);font-weight:500;padding:6px 0 6px 30px;list-style:none}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::before{content:"▸";font-size:11px;display:inline-block;margin-left:-16px;width:16px;transition:transform .15s}
+details.more[open]>summary::before{transform:rotate(90deg)}
+.divider details.more{margin-left:0}
+.card>details.more>summary{padding-left:16px}
+.card>details.more>summary::before{margin-left:-16px}
+
+/* uniform buttons: same height everywhere, equal widths within a group */
+button.b,a.b{min-width:112px;white-space:nowrap;margin:0}
+.btns{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:8px;margin:8px 0}
+.btns>.b{width:100%;min-width:0}
+.card>.b,.card>div>.b{margin:6px 8px 6px 0}
+.actions{flex:1 1 220px}
+.actions .btns{margin:0;grid-template-columns:repeat(auto-fit,minmax(100px,1fr))}
+.login .b{width:100%}
+
+/* final sizing: every button is exactly 148 x 40 */
+button.b,a.b{width:148px;min-width:0;padding:6px 10px;font-size:14px;overflow:hidden;text-overflow:ellipsis}
+.btns{grid-template-columns:repeat(auto-fill,148px);justify-content:start}
+.btns>.b,.actions .btns>.b{width:148px}
+.actions .btns{grid-template-columns:repeat(auto-fill,148px);justify-content:end}
+.login .b{width:100%}
+@media(min-width:760px){button.b,a.b{width:148px}}
+
+/* automatic updates: tidy sub-options */
+.suboptions{margin:2px 0 4px 8px;padding-left:22px;border-left:2px solid var(--line)}
+.suboptions .group{padding:8px 0 4px}
+.suboptions .group+.group{border-top:1px solid var(--line);margin-top:6px}
+.group-title{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--mut);margin-bottom:2px}
+.suboptions .opt{padding:6px 0}
+.suboptions .opt-time{margin:0 0 6px 30px;display:flex;align-items:center;gap:8px}
+.lastrun{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:4px 0 8px}
+.lastrun small{display:block;color:var(--mut);font-size:12px}
+.suboptions pre{margin-bottom:0}
+.opt b small.okmsg{display:inline;margin-left:8px;font-weight:500}
+
+/* toggle switch (right-aligned) */
+.switch-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 0;cursor:pointer;color:var(--fg);font-size:inherit}
+.switch-row b{display:block;font-weight:550}
+.switch-row small{display:block;color:var(--mut);font-size:13px;font-weight:400}
+input.switch{-webkit-appearance:none;appearance:none;flex:none;position:relative;width:46px;height:28px;min-height:0;margin:0;border-radius:99px;background:var(--line);border:0;cursor:pointer;transition:background .15s}
+input.switch::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3);transition:transform .15s}
+input.switch:checked{background:var(--accent)}
+input.switch:checked::after{transform:translateX(18px)}

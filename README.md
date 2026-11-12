@@ -1,4 +1,4 @@
-# SensSpinPi
+# SendspinPi
 
 A lightweight web UI for running the [Sendspin CLI](https://github.com/Sendspin/sendspin-cli) on small Raspberry Pi boards such as the Pi Zero 2 W. It walks you through setup and handles the day-to-day admin from your phone.
 
@@ -21,16 +21,18 @@ A lightweight web UI for running the [Sendspin CLI](https://github.com/Sendspin/
 On the Pi:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/thatguy-za/SensSpinPi/main/get.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/thatguy-za/SendspinPi/main/get.sh | sudo bash
 ```
 
-When it finishes it prints the address, the username `admin` and a **randomly generated password**. The password is shown once, so note it down. You can change both in the web UI under **Account**.
+The installer asks you to choose a password (twice, at least 8 characters) for the web UI. The username is `admin`. When it finishes it prints the address and the setup hotspot details. You can change the username and password later in the web UI under **Account**.
+
+For unattended installs there's no terminal to ask on, so set `SENDSPINPI_PASSWORD=...` before `bash`, or let it generate a random password, which is shown once at the end.
 
 Prefer to read the code first? Clone and run it yourself:
 
 ```bash
-git clone https://github.com/thatguy-za/SensSpinPi.git
-cd SensSpinPi
+git clone https://github.com/thatguy-za/SendspinPi.git
+cd SendspinPi
 sudo ./install.sh
 ```
 
@@ -43,30 +45,54 @@ sudo ./install.sh
 
 ### No network yet?
 
-If the Pi can't connect to a network about a minute after boot, it starts a hotspot called `SensSpin-Setup`. The installer prints its password. Join it, open `http://10.42.0.1/`, go to **WiFi** and pick your network. The hotspot goes away once you're connected.
+If the Pi can't connect to a network about a minute after boot, it starts a hotspot called `SendspinPi-Setup`. The installer prints its password. Join it, open `http://10.42.0.1/`, go to **WiFi** and pick your network. The hotspot goes away once you're connected.
 
 ### I²S DAC HATs
 
-In **Audio**, pick your HAT from the list and apply it. This adds a managed block to `/boot/firmware/config.txt` (a backup is saved next to it as `config.txt.sensspin.bak`) and needs a reboot. Choosing "None" removes it again.
+In **Audio**, pick your HAT from the list and apply it. This adds a managed block to `/boot/firmware/config.txt` (a backup is saved next to it as `config.txt.sendspinpi.bak`) and needs a reboot. Choosing "None" removes it again.
+
+### Bluetooth speakers
+
+Open the **Bluetooth** tab, put your speaker in pairing mode, press **Scan**, then **Pair & connect** and **Use for Sendspin**. The speaker is trusted, so it can reconnect on its own after a reboot. **Auto-reconnect** (on by default, toggle in the Bluetooth tab) also makes the Pi retry every 30 seconds if the speaker drops, and the player restarts when it comes back. It only applies to the speaker currently used for Sendspin.
+
+While a Bluetooth speaker is the output, volume changes from your Sendspin server are applied to the speaker's own volume (through Sendspin's `hook_set_volume` and `bluealsactl`). Choosing another output in **Audio**, or pressing **Stop using**, switches back.
+
+Audio uses [BlueALSA](https://github.com/arkq/bluez-alsa), which is much lighter than PipeWire. The Pi Zero 2 W shares one antenna between WiFi and Bluetooth, so audio may stutter if the signal is weak. Keep the Pi near the speaker, or use ethernet if you can.
+
+### Automatic updates
+
+In **System → Automatic updates**, switch on "Install updates automatically" and the Pi checks once a day and installs updates in the background (using Debian's `unattended-upgrades`). Choose **Security fixes only** (safest) or **All updates** (also bug fixes and Raspberry Pi updates). You can optionally let the Pi restart itself at a set time when an update needs it. Music stops for about a minute. If you leave that off, the System page shows a reminder when a restart is needed. **Check and install now** runs it straight away, and **Show details** shows the log.
+
+### SendspinPi updates
+
+**System → SendspinPi updates** shows the installed version and whether a newer release exists. **Update now** installs it (the page restarts for about a minute and your settings are kept). Switch on "Update SendspinPi automatically" to check every few hours and install new releases without you doing anything. It's off by default, and it only installs tagged [GitHub releases](https://github.com/thatguy-za/SendspinPi/releases), never unreleased code.
 
 ## Updating
 
-Re-run the install command. It keeps your password, WiFi and Sendspin settings. Use `--reset-password` to generate a new admin password:
+Re-run the install command. It updates the app and keeps your password, WiFi and Sendspin settings:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/thatguy-za/SensSpinPi/main/get.sh | sudo bash -s -- --reset-password
+curl -fsSL https://raw.githubusercontent.com/thatguy-za/SendspinPi/main/get.sh | sudo bash
+```
+
+## Forgot your password?
+
+Running the installer with `--reset-password` asks you for a new admin password. It also installs the latest version, but your WiFi and Sendspin settings are kept:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thatguy-za/SendspinPi/main/get.sh | sudo bash -s -- --reset-password
 ```
 
 ## Security notes
 
 - The UI runs as root on plain HTTP (port 80) because it manages the OS. Keep it on a trusted network and don't expose it to the internet.
-- Logins are rate limited and passwords are stored as PBKDF2 hashes in `/etc/sensspin/config.json` (root only).
+- Logins are rate limited and passwords are stored as PBKDF2 hashes in `/etc/sendspinpi/config.json` (root only).
 
 ## Uninstall
 
 ```bash
-sudo systemctl disable --now sensspin-web sendspin
-sudo rm -rf /opt/sensspin /etc/sensspin /etc/systemd/system/sensspin-web.service /etc/systemd/system/sendspin.service
+sudo systemctl disable --now sendspinpi-web sendspin
+sudo rm -rf /opt/sendspinpi /etc/sendspinpi /etc/systemd/system/sendspinpi-web.service /etc/systemd/system/sendspin.service
 sudo userdel -r sendspin
 ```
 
@@ -74,8 +100,8 @@ sudo userdel -r sendspin
 
 ```
 get.sh / install.sh    installers
-sensspin/              Python backend (server, wifi, audio, system, sendspin control)
-sensspin/static/       web UI (HTML/CSS/JS)
+sendspinpi/              Python backend (server, wifi, audio, system, sendspin control)
+sendspinpi/static/       web UI (HTML/CSS/JS)
 systemd/               service units
 ```
 
@@ -86,3 +112,7 @@ Early release. Developed and smoke-tested off-device; please open an issue if so
 ## License
 
 MIT
+
+## Releasing (maintainers)
+
+Automatic updates follow GitHub releases. To ship a version, set `__version__` in `sendspinpi/__init__.py`, commit, then tag and publish a release named `vX.Y.Z` (for example `gh release create v0.2.0 --generate-notes`). The tag must match the version number.

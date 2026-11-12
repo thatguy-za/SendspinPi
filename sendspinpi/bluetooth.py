@@ -1,0 +1,180 @@
+"""Bluetooth speaker management (BlueZ via bluetoothctl) for BlueALSA output."""
+import re
+import threading
+import time
+
+from . import config, sendspin_ctl
+from .util import run
+
+MAC_RE = re.compile(r"^[0-9A-F]{2}(:[0-9A-F]{2}){5}$")
+
+
+def norm(mac):
+    m = str(mac).strip().upper()
+    return m if MAC_RE.match(m) else None
+
+
+def _ctl(*args, timeout=20):
+    return run(["bluetoothctl"] + list(args), timeout=timeout)
+
+
+def adapter():
+    rc, out, err = _ctl("show")
+    if rc == 127:
+        return {"available": False, "error": "Bluetooth tools are not installed (re-run the installer)."}
+    if rc != 0 or "Controller" not in out:
+        return {"available": False, "error": (err or out or "No Bluetooth adapter found").strip()}
+    m = re.search(r"Powered: (\w+)", out)
+    return {"available": True, "powered": bool(m and m.group(1) == "yes")}
+
+
+def ensure_powered():
+    run(["rfkill", "unblock", "bluetooth"])
+    _ctl("power", "on")
+
+
+def info(mac):
+    rc, out, _ = _ctl("info", mac)
+    if rc != 0:
+        return None
+
+    def flag(name):
+        m = re.search(r"^\s*%s: (\w+)" % name, out, re.M)
+        return bool(m and m.group(1) == "yes")
+    name = re.search(r"^\s*Alias: (.+)$", out, re.M) or re.search(r"^\s*Name: (.+)$", out, re.M)
+    icon = re.search(r"^\s*Icon: (\S+)", out, re.M)
+    audio = bool((icon and icon.group(1).startswith("audio")) or "Audio Sink" in out
+                 or "0000110b" in out.lower())
+    return {"mac": mac, "name": name.group(1).strip() if name else mac, "paired": flag("Paired"),
+            "trusted": flag("Trusted"), "connected": flag("Connected"), "audio": audio,
+            "known_type": bool(icon)}
+
+
+def selected_mac():
+    dev = sendspin_ctl.read_settings().get("audio_device", "")
+    m = re.search(r"DEV=([0-9A-Fa-f:]{17})", dev)
+    return m.group(1).upper() if m else None
+
+
+def devices():
+    _, out, _ = _ctl("devices")
+    sel = selected_mac()
+    res = []
+    for line in out.splitlines():
+        m = re.match(r"Device ([0-9A-F:]{17}) (.*)", line)
+        if not m:
+            continue
+        d = info(m.group(1))
+        if not d:
+            continue
+        d["in_use"] = d["mac"] == sel
+        # hide unnamed random devices (name == MAC with dashes) unless known audio
+        if not d["audio"] and d["name"].replace("-", ":") == d["mac"]:
+            continue
+        res.append(d)
+    res.sort(key=lambda d: (not d["in_use"], not d["connected"], not d["audio"], d["name"].lower()))
+    return res
+
+
+def status():
+    a = adapter()
+    if a["available"] and not a["powered"]:
+        ensure_powered()
+        a = adapter()
+    a["devices"] = devices() if a["available"] else []
+    a["selected"] = selected_mac()
+    a["auto_reconnect"] = config.load()["bluetooth_auto_reconnect"]
+    return a
+
+
+def scan(seconds=8):
+    ensure_powered()
+    _ctl("--timeout", str(seconds), "scan", "on", timeout=seconds + 10)
+    return devices()
+
+
+def pair_steps(mac):
+    def go(log):
+        d = info(mac)
+        if not d or not d["paired"]:
+            log("Pairing with %s…" % mac)
+            rc, out, err = run(["bluetoothctl", "--agent", "NoInputNoOutput", "pair", mac], timeout=60)
+            log((out + err).strip())
+            d = info(mac)
+            if not d or not d["paired"]:
+                raise RuntimeError("Pairing failed. Put the speaker in pairing mode and try again.")
+        log("Trusting (so it reconnects automatically)…")
+        log(" ".join(_ctl("trust", mac)[1:]).strip())
+        log("Connecting…")
+        rc, out, err = _ctl("connect", mac, timeout=40)
+        log((out + err).strip())
+        d = info(mac)
+        if not d or not d["connected"]:
+            raise RuntimeError("Paired, but could not connect.")
+        log("Connected to %s." % d["name"])
+    return [go]
+
+
+def connect(mac):
+    rc, out, err = _ctl("connect", mac, timeout=40)
+    d = info(mac)
+    return bool(d and d["connected"]), (out + err).strip()
+
+
+def disconnect(mac):
+    rc, out, err = _ctl("disconnect", mac)
+    return rc == 0, (out + err).strip()
+
+
+def _restart_player():
+    if sendspin_ctl.service_state()["active"] == "active":
+        sendspin_ctl.service_action("restart")
+
+
+def use(mac):
+    cur = sendspin_ctl.read_settings().get("audio_device", "")
+    if cur and not cur.startswith("bluealsa"):
+        config.update(previous_audio_device=cur)
+    sendspin_ctl.set_audio_device("bluealsa:DEV=%s,PROFILE=a2dp" % mac)
+    _restart_player()
+
+
+def unuse():
+    cfg = config.load()
+    sendspin_ctl.set_audio_device(cfg.get("previous_audio_device", ""))
+    _restart_player()
+
+
+def forget(mac):
+    if selected_mac() == mac:
+        unuse()
+    rc, out, err = _ctl("remove", mac)
+    return rc == 0, (out + err).strip()
+
+
+def watchdog_loop():
+    """Keep the selected speaker connected; restart the player when it (re)appears."""
+    time.sleep(45)
+    last = None
+    attempt = 0.0
+    while True:
+        try:
+            mac = selected_mac()
+            if not mac:
+                last = None
+            else:
+                d = info(mac)
+                connected = bool(d and d["connected"])
+                auto = config.load()["bluetooth_auto_reconnect"]
+                if auto and not connected and time.time() - attempt > 30 and d and d["paired"]:
+                    attempt = time.time()
+                    ensure_powered()
+                    _ctl("connect", mac, timeout=30)
+                    d = info(mac)
+                    connected = bool(d and d["connected"])
+                if connected and last is False and sendspin_ctl.service_state()["enabled"] == "enabled":
+                    sendspin_ctl.service_action("restart")
+                last = connected
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(20)

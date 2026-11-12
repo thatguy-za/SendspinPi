@@ -23,7 +23,7 @@ OVERLAYS = {
     "pcm5102a": "Generic PCM5102A (GY-PCM5102)",
     "merus-amp": "Merus Amp",
 }
-BEGIN, END = "# sensspin-dac begin", "# sensspin-dac end"
+BEGIN, END = "# sendspinpi-dac begin", "# sendspinpi-dac end"
 
 
 def config_txt():
@@ -53,7 +53,7 @@ def set_overlay(name):
     if name and name not in OVERLAYS:
         return "unknown overlay"
     text = open(p).read()
-    bak = p + ".sensspin.bak"
+    bak = p + ".sendspinpi.bak"
     if not os.path.exists(bak):
         open(bak, "w").write(text)
     text = re.sub(re.escape(BEGIN) + r".*?" + re.escape(END) + r"\n?", "", text, flags=re.S)

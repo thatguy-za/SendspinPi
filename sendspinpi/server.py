@@ -8,7 +8,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import audio, config, sendspin_ctl, system, util, wifi
+from . import audio, bluetooth, config, selfupdate, sendspin_ctl, system, updates, util, wifi
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 FILES = {"/": ("index.html", "text/html; charset=utf-8"),
@@ -154,8 +154,9 @@ def sp_config(h, q, body):
         dev = str(body["audio_device"]).strip()
         if dev and not audio.valid_device(dev):
             raise ApiError("Invalid audio device")
-        kw["audio_device"] = dev
-    sendspin_ctl.write_settings(**kw)
+        sendspin_ctl.set_audio_device(dev)
+    if kw:
+        sendspin_ctl.write_settings(**kw)
     restarted = False
     if sendspin_ctl.service_state()["active"] == "active":
         sendspin_ctl.service_action("restart")
@@ -217,6 +218,52 @@ def apt_upgrade(h, q, body):
     return _start("Upgrade OS packages", system.apt_upgrade_steps(), system.APT_ENV)
 
 
+@route("GET", "/api/updates")
+def updates_status(h, q, body):
+    return updates.status()
+
+
+@route("POST", "/api/updates")
+def updates_save(h, q, body):
+    cur = updates.status()
+    err = updates.apply(bool(body.get("enabled", cur["enabled"])),
+                        str(body.get("scope", cur["scope"])),
+                        bool(body.get("reboot", cur["reboot"])),
+                        str(body.get("reboot_time", cur["reboot_time"])))
+    if err:
+        raise ApiError(err)
+    return updates.status()
+
+
+@route("POST", "/api/updates/run")
+def updates_run(h, q, body):
+    return _start("Install updates now", updates.run_now_steps(), system.APT_ENV)
+
+
+@route("GET", "/api/selfupdate")
+def selfupdate_status(h, q, body):
+    return selfupdate.status(force=bool(q.get("check")))
+
+
+@route("POST", "/api/selfupdate")
+def selfupdate_save(h, q, body):
+    config.update(selfupdate_auto=bool(body.get("auto")))
+    return selfupdate.status()
+
+
+@route("POST", "/api/selfupdate/run")
+def selfupdate_run(h, q, body):
+    err = selfupdate.start_update()
+    if err:
+        raise ApiError(err)
+    return {"ok": True}
+
+
+@route("GET", "/api/selfupdate/log")
+def selfupdate_log(h, q, body):
+    return {"log": selfupdate.log_tail(), "version": selfupdate.__version__}
+
+
 @route("POST", "/api/power")
 def power(h, q, body):
     action = body.get("action")
@@ -257,9 +304,69 @@ def wifi_forget(h, q, body):
     return {"ok": True}
 
 
+# -------------------------------------------------------------- bluetooth
+def _mac(body):
+    mac = bluetooth.norm(body.get("mac", ""))
+    if not mac:
+        raise ApiError("Invalid Bluetooth address")
+    return mac
+
+
+@route("GET", "/api/bluetooth")
+def bt_status(h, q, body):
+    return bluetooth.status()
+
+
+@route("POST", "/api/bluetooth/scan")
+def bt_scan(h, q, body):
+    return {"devices": bluetooth.scan()}
+
+
+@route("POST", "/api/bluetooth/pair")
+def bt_pair(h, q, body):
+    return _start("Pair Bluetooth speaker", bluetooth.pair_steps(_mac(body)))
+
+
+@route("POST", "/api/bluetooth/connect")
+def bt_connect(h, q, body):
+    ok, msg = bluetooth.connect(_mac(body))
+    if not ok:
+        raise ApiError(msg or "Could not connect")
+    return {"ok": True}
+
+
+@route("POST", "/api/bluetooth/disconnect")
+def bt_disconnect(h, q, body):
+    bluetooth.disconnect(_mac(body))
+    return {"ok": True}
+
+
+@route("POST", "/api/bluetooth/forget")
+def bt_forget(h, q, body):
+    ok, msg = bluetooth.forget(_mac(body))
+    if not ok:
+        raise ApiError(msg or "Could not remove device")
+    return {"ok": True}
+
+
+@route("POST", "/api/bluetooth/auto")
+def bt_auto(h, q, body):
+    config.update(bluetooth_auto_reconnect=bool(body.get("enabled")))
+    return {"ok": True}
+
+
+@route("POST", "/api/bluetooth/use")
+def bt_use(h, q, body):
+    if body.get("mac"):
+        bluetooth.use(_mac(body))
+    else:
+        bluetooth.unuse()
+    return {"ok": True, "selected": bluetooth.selected_mac()}
+
+
 # ---------------------------------------------------------------- handler
 class Handler(BaseHTTPRequestHandler):
-    server_version = "SensSpin"
+    server_version = "SendspinPi"
     protocol_version = "HTTP/1.1"
     set_cookie = None
 
@@ -305,7 +412,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "Not found"})
         fn, needs_auth = entry
         try:
-            if method == "POST" and self.headers.get("X-Requested-With") != "sensspin":
+            if method == "POST" and self.headers.get("X-Requested-With") != "sendspinpi":
                 raise ApiError("Bad request", 403)
             if needs_auth and not self.authed():
                 raise ApiError("Not logged in", 401)
@@ -339,7 +446,9 @@ def main():
     cfg = config.load()
     if not cfg["password_hash"]:
         config.init()
-    port = int(os.environ.get("SENSSPIN_PORT", cfg["port"]))
+    port = int(os.environ.get("SENDSPINPI_PORT", cfg["port"]))
     threading.Thread(target=wifi.hotspot_loop, daemon=True).start()
+    threading.Thread(target=bluetooth.watchdog_loop, daemon=True).start()
+    threading.Thread(target=selfupdate.auto_loop, daemon=True).start()
     ThreadingHTTPServer.daemon_threads = True
     ThreadingHTTPServer(("", port), Handler).serve_forever()
