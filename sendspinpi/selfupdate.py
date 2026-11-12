@@ -59,7 +59,7 @@ def start_update(tag=None):
     if status()["updating"]:
         return "An update is already running"
     script = ("set -e; echo \"== SendspinPi update to %(t)s: $(date)\"; "
-              "curl -fsSL https://raw.githubusercontent.com/%(r)s/%(t)s/get.sh "
+              "curl -fsSL https://raw.githubusercontent.com/%(r)s/%(t)s/install.sh "
               "| SENDSPINPI_REF=%(t)s bash") % {"t": tag, "r": REPO}
     rc, out, err = run(["systemd-run", "--unit=" + UNIT, "--collect",
                         "-p", "StandardOutput=append:" + LOG, "-p", "StandardError=append:" + LOG,

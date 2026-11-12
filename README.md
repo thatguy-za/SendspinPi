@@ -21,7 +21,7 @@ A lightweight web UI for running the [Sendspin CLI](https://github.com/Sendspin/
 On the Pi:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/thatguy-za/SendspinPi/main/get.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/thatguy-za/SendspinPi/main/install.sh | sudo bash
 ```
 
 The installer asks you to choose a password (twice, at least 8 characters) for the web UI. The username is `admin`. When it finishes it prints the address and the setup hotspot details. You can change the username and password later in the web UI under **Account**.
@@ -72,7 +72,7 @@ In **System → Automatic updates**, switch on "Install updates automatically" a
 Re-run the install command. It updates the app and keeps your password, WiFi and Sendspin settings:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/thatguy-za/SendspinPi/main/get.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/thatguy-za/SendspinPi/main/install.sh | sudo bash
 ```
 
 ## Forgot your password?
@@ -80,7 +80,7 @@ curl -fsSL https://raw.githubusercontent.com/thatguy-za/SendspinPi/main/get.sh |
 Running the installer with `--reset-password` asks you for a new admin password. It also installs the latest version, but your WiFi and Sendspin settings are kept:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/thatguy-za/SendspinPi/main/get.sh | sudo bash -s -- --reset-password
+curl -fsSL https://raw.githubusercontent.com/thatguy-za/SendspinPi/main/install.sh | sudo bash -s -- --reset-password
 ```
 
 ## Security notes
@@ -99,7 +99,7 @@ sudo userdel -r sendspin
 ## Layout
 
 ```
-get.sh / install.sh    installers
+install.sh / setup.sh    installer (install.sh downloads and runs setup.sh)
 sendspinpi/              Python backend (server, wifi, audio, system, sendspin control)
 sendspinpi/static/       web UI (HTML/CSS/JS)
 systemd/               service units
