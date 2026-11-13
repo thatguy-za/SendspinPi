@@ -1,6 +1,7 @@
 """Bluetooth speaker management (BlueZ via bluetoothctl) for BlueALSA output."""
 import os
 import re
+import shutil
 import threading
 import time
 
@@ -117,6 +118,7 @@ def status():
     a["devices"] = devices() if a["available"] else []
     a["selected"] = selected_mac()
     a["auto_reconnect"] = config.load()["bluetooth_auto_reconnect"]
+    a["native_volume"] = native_volume_enabled()
     return a
 
 
@@ -251,6 +253,44 @@ def migrate():
         if "type plug" in old_conf:
             _write_conf(mac)
             _restart_player()
+
+
+NATIVE_FLAG = os.environ.get("SENDSPINPI_NATIVEFLAG", os.path.join(sendspin_ctl.SENDSPIN_HOME, "native-volume"))
+
+
+def native_volume_enabled():
+    return os.path.exists(NATIVE_FLAG)
+
+
+def _soft_volume(mac, on):
+    """Tell BlueALSA whether it scales the volume itself (on) or hands it to the speaker (off)."""
+    ctl = shutil.which("bluealsactl") or shutil.which("bluealsa-cli")
+    if not ctl or not mac:
+        return
+    key = ("dev_" + mac.replace(":", "_") + "/a2dpsrc").lower()
+    _, out, _ = run([ctl, "list-pcms"])
+    for line in out.splitlines():
+        if key in line.lower():
+            run([ctl, "soft-volume", line.split()[0], "on" if on else "off"])
+            return
+
+
+def set_native_volume(enabled):
+    """Two-way volume: the speaker's own volume (and its buttons) drive the Sendspin volume.
+    The player reads the marker file at start-up, so it is restarted."""
+    os.makedirs(os.path.dirname(NATIVE_FLAG), exist_ok=True)
+    if enabled:
+        with open(NATIVE_FLAG, "w"):
+            pass
+        os.chmod(NATIVE_FLAG, 0o644)
+    else:
+        try:
+            os.remove(NATIVE_FLAG)
+        except OSError:
+            pass
+    config.update(bt_native_volume=bool(enabled))
+    _soft_volume(selected_mac(), not enabled)
+    _restart_player()
 
 
 def forget_all():

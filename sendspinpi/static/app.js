@@ -1,4 +1,9 @@
 "use strict";
+// The browser's append()/prepend() turn null or false into the text "null"/"false"; skip them instead
+for (const m of ["append", "prepend"]) {
+  const native = Element.prototype[m];
+  Element.prototype[m] = function (...kids) { return native.apply(this, kids.filter(k => k != null && k !== false)); };
+}
 // ---------- helpers (DOM built with textContent only: SSIDs etc. are untrusted)
 const $app = document.getElementById("app");
 function h(tag, attrs, ...kids) {
@@ -29,7 +34,7 @@ const btn = (label, fn, cls = "") => {
   const b = h("button", { class: "b " + cls }, label);
   b.addEventListener("click", async () => {
     b.disabled = true;
-    try { await fn(b); } catch (e) { alert(e.message); }
+    try { await fn(b); } catch (e) { tell(e.message); }
     b.disabled = false;
   });
   return b;
@@ -77,11 +82,12 @@ const state = { me: null, status: null, tab: "home", wiz: 0, kind: null, timer: 
 // [id, path, label]. Every page has its own URL (History API); the server serves the app for each path.
 const ROUTES = [["home", "/", "Home"], ["wizard", "/setup", "Setup"], ["sendspin", "/sendspin", "Sendspin"],
   ["audio", "/audio", "Audio output"], ["wifi", "/wifi", "WiFi"], ["system", "/system", "System"],
-  ["power", "/power", "Power"], ["account", "/account", "Account"]];
+  ["account", "/account", "Account"]];
 const route = id => ROUTES.find(r => r[0] === id);
 function idForPath(p) {
   p = p.replace(/\/+$/, "") || "/";
   if (p === "/bluetooth") p = "/audio";   // Bluetooth now lives on the Audio output page
+  if (p === "/power") p = "/system";      // so does Power, on the System page
   const r = ROUTES.find(r => r[1] === p);
   return r ? r[0] : "home";
 }
@@ -102,6 +108,8 @@ async function boot() {
     // a new install opens the setup guide; once setup is complete the guide is hidden
     if (!done && state.tab === "home" && location.pathname === "/") { state.tab = "wizard"; history.replaceState({}, "", "/setup"); }
     if (done && state.tab === "wizard") { state.tab = "home"; history.replaceState({}, "", "/"); }
+    const want = route(state.tab)[1];   // old addresses (/power, /bluetooth) become the current ones
+    if (location.pathname !== want) history.replaceState({}, "", want);
   } catch (e) { state.me = null; }
   render();
 }
@@ -199,7 +207,7 @@ async function wizard(main) {
       body.append(h("p", {}, "Where should the sound come out? Pick one type, then choose the output."), host,
         nav(async () => {
           const a = await api("/api/audio");
-          if (!a.selected && !confirm("No output has been chosen, so the system default will be used. Continue?")) return false;
+          if (!a.selected && !(await ask("No output has been chosen, so the system default will be used. Continue?"))) return false;
         }));
       await audioOutputPanel(host, { wizard: true });
     },
@@ -282,8 +290,7 @@ function btPanel(b, onChange, opts) {
       if (temp) acts.append(btn("Make permanent", startPair, "sec"));
     }
     const links = h("span", { class: "dev-links" });
-    if (d.in_use) links.append(link("Stop using", async () => { await post("use", ""); onChange(); }));
-    if (d.paired) links.append(link("Forget", async () => { if (confirm("Forget " + d.name + "?")) { await post("forget", d.mac); onChange(); } }, "bad"));
+    if (d.paired) links.append(link("Forget", async () => { if (await ask("Forget " + d.name + "? You will need to pair it again to use it.", { yes: "Forget", danger: true })) { await post("forget", d.mac); onChange(); } }, "bad"));
     if (links.children.length) acts.append(links);
     return h("div", { class: "dev-row" },
       h("div", { class: "dev-head" }, h("div", {}, h("b", {}, d.name), h("small", {}, d.mac)), tag),
@@ -294,20 +301,19 @@ function btPanel(b, onChange, opts) {
     mineBox.textContent = nearList.textContent = "";
     const cur = devs.find(d => d.in_use);
     const mine = devs.filter(d => d.paired || d.in_use), nearby = devs.filter(d => !d.paired && !d.in_use);
-    if (mine.length) mineBox.append(...[h("div", { class: "group-title" }, "My speakers"),
+    if (mine.length) mineBox.append(...[
       cur && cur.paired && opts.banner ? h("div", { class: "flash" }, cur.name + " is set as your Sendspin output.") : null,
       devs.some(d => d.in_use && !d.paired) ? h("div", { class: "callout" }, "The Pi has forgotten this speaker. It pairs again automatically when the speaker is switched on and nearby, or put it in pairing mode and press Pair again.") : null,
       ...mine.map(device)].filter(Boolean));
     // While a speaker is connected, keep other devices out of the way until the user scans
     const busy = devs.some(d => d.connected || d.in_use);
-    nearList.append(...(busy && !scanned ? [h("p", { class: "mut" }, "Looking for another speaker? Press Scan.")]
-      : nearby.length ? nearby.map(device)
+    nearList.append(...(busy && !scanned ? []
+      : nearby.length ? [h("div", { class: "group-title" }, "Nearby"), ...nearby.map(device)]
       : [h("p", { class: "mut" }, "Switch your speaker to pairing mode, then press Scan.")]));
   };
   paint(b.devices);
-  wrap.append(mineBox, h("div", { class: "group-title" }, "Add a speaker"),
-    btn("Scan", async () => { nearList.textContent = "Scanning for 8 seconds…"; const r = await api("/api/bluetooth/scan", {}); paint(r.devices, true); }, "sec"),
-    nearList, log);
+  const scan = btn("Scan", async () => { nearList.textContent = "Scanning for 8 seconds…"; const r = await api("/api/bluetooth/scan", {}); paint(r.devices, true); }, "sec");
+  wrap.append(mineBox, h("div", { class: "add-row" }, h("span", {}, b.devices.some(d => d.paired || d.in_use) ? "Add another speaker" : "Add a speaker"), scan), nearList, log);
   return wrap;
 }
 
@@ -321,8 +327,8 @@ async function audioOutputPanel(host, opts) {
   const kind = state.kind || out.type;
   let sel = out.type === "bluetooth" ? "" : a.selected;
   const reload = () => { host.textContent = ""; return audioOutputPanel(host, opts); };
-  const head = h("div", { class: "active-output" }, h("small", {}, "Active output"),
-    h("b", {}, { system: "System output", i2s: "I²S DAC", bluetooth: "Bluetooth speaker" }[out.type] + " · " + out.label));
+  const head = h("div", { class: "current" }, h("i", { class: "dot ok" }),
+    h("span", {}, "In use: ", h("b", {}, { system: "System output", i2s: "I²S DAC", bluetooth: "Bluetooth speaker" }[out.type] + " · " + out.label)));
   const seg = h("div", { class: "seg" }, Object.entries(OUTPUT_TYPES).map(([k, label]) =>
     h("button", { class: kind === k ? "on" : "", onclick: () => { state.kind = k; reload(); } }, label)));
   const panel = h("div", {}), log = h("div", {});
@@ -358,11 +364,19 @@ async function audioOutputPanel(host, opts) {
     panel.textContent = "";
     if (!b.available) return panel.append(h("p", { class: "err" }, b.error || "Bluetooth is not available on this Pi."));
     const auto = h("input", { type: "checkbox", class: "switch", role: "switch", "aria-label": "Reconnect automatically", checked: b.auto_reconnect });
-    auto.addEventListener("change", () => api("/api/bluetooth/auto", { enabled: auto.checked }).catch(e => { alert(e.message); auto.checked = !auto.checked; }));
+    auto.addEventListener("change", () => api("/api/bluetooth/auto", { enabled: auto.checked }).catch(e => { tell(e.message); auto.checked = !auto.checked; }));
+    const two = h("input", { type: "checkbox", class: "switch", role: "switch", "aria-label": "Two-way volume", checked: b.native_volume });
+    two.addEventListener("change", async () => {
+      try { await api("/api/bluetooth/native-volume", { enabled: two.checked }); }
+      catch (e) { tell(e.message); two.checked = !two.checked; }
+    });
     panel.append(btPanel(b, reload, { banner: !!opts.wizard }),
       h("div", { class: "divider" }, h("label", { class: "switch-row" },
-        h("span", {}, h("b", {}, "Reconnect automatically"), h("small", {}, "If the speaker disconnects, the Pi keeps trying to reconnect it.")), auto)),
-      h("p", { class: "note" }, "On a Pi Zero 2 W, Bluetooth and WiFi share one antenna. If audio stutters, move the Pi closer to the speaker or use ethernet."));
+        h("span", {}, h("b", {}, "Reconnect automatically"), h("small", {}, "If the speaker disconnects, the Pi keeps trying to reconnect it.")), auto),
+        h("label", { class: "switch-row" },
+          h("span", {}, h("b", {}, "Two-way volume (beta)"), h("small", {}, "Use the speaker's own volume. Its buttons move the Sendspin slider, and the slider moves the speaker. The player restarts when you change this.")), two)),
+      h("details", { class: "more" }, h("summary", {}, "Audio stuttering?"),
+        h("p", { class: "note" }, "On a Pi Zero 2 W, Bluetooth and WiFi share one antenna. Move the Pi closer to the speaker, or use ethernet.")));
   }
 }
 
@@ -371,9 +385,9 @@ function overlayPicker(a, onApplied) {
     Object.entries(a.overlays).map(([k, v]) => h("option", { value: k, selected: a.overlay === k }, v)));
   return h("div", {}, h("label", {}, "I²S DAC HAT (writes dtoverlay to config.txt, needs reboot)"), sel,
     btn("Apply overlay", async () => {
-      if (!confirm("Apply this DAC overlay? A reboot is needed afterwards.")) return;
+      if (!(await ask("Apply this DAC overlay? The Pi needs a restart afterwards.", { yes: "Apply" }))) return;
       await api("/api/audio/overlay", { overlay: sel.value });
-      if (confirm("Saved. Reboot now to activate it?")) { await api("/api/power", { action: "reboot" }); alert("Rebooting… reload this page in a minute."); }
+      if (await ask("Saved. Restart now to activate it?", { yes: "Restart now" })) { await api("/api/power", { action: "reboot" }); tell("Rebooting… reload this page in a minute."); }
       else onApplied();
     }, "sec"));
 }
@@ -394,49 +408,67 @@ function deviceList(a, onPick, selected) {
 // ---------- Tabs
 const views = {
   async home(main) {
-    const alerts = h("div", { class: "alerts" }), grid = h("div", { class: "tiles" });
-    main.append(alerts, grid);
+    const banner = h("div", { class: "summary" }), alerts = h("div", { class: "alerts" }), groups = h("div", {});
+    main.append(banner, alerts, groups);
     const chip = (text, id) => { const c = h("a", { class: "chip", href: route(id)[1] }, text); c.addEventListener("click", e => { e.preventDefault(); go(id); }); alerts.append(c); };
-    // a tile is a link to the page where that thing is managed
-    const tile = (id, label, value, sub, dot, extra) => {
-      const t = h("a", { class: "tile", href: route(id)[1] },
-        h("div", { class: "tile-label" }, label),
-        h("div", { class: "tile-value" }, dot ? h("i", { class: "dot " + dot }) : null, h("span", { class: "tile-text" }, value)),
-        sub ? h("div", { class: "tile-sub" }, sub) : null, extra || null);
+    // a labelled row: muted label on the left, value on the right (with an optional status dot)
+    const item = (label, value, dot, sub) => h("div", { class: "row" }, h("span", {}, label),
+      h("span", { class: "val" }, dot ? h("i", { class: "dot " + dot }) : null, h("span", {}, value), sub ? h("small", {}, sub) : null));
+    // one card per area; its title links to the page where that area is managed
+    const group = (title, id, rows) => {
+      const t = h("a", { class: "group-link", href: route(id)[1] }, "Manage");
       t.addEventListener("click", e => { e.preventDefault(); go(id); });
-      return t;
+      return h("div", { class: "card kv" }, h("div", { class: "section-head" }, h("h2", {}, title), t), ...rows);
     };
     const paint = d => {
       const w = d.wifi, p = d.player, sys = d.system, o = d.output, bt = d.bluetooth, v = d.volume;
       const svc = p.service.active;
       const player = !p.installed ? ["Not installed", "bad"] : svc === "active" ? ["Running", "ok"] : svc === "activating" ? ["Starting", "warn"] : ["Stopped", "bad"];
       let net;
-      if (w.connected) net = [w.ssid, [w.ip, w.signal != null ? w.signal + "%" : null].filter(Boolean).join(" · "), "ok"];
-      else if (w.hotspot) net = ["Setup hotspot", "Join it and open 10.42.0.1", "warn"];
-      else if (w.ethernet) net = ["Ethernet", w.ethernet.ip, "ok"];
-      else net = [w.available ? "Not connected" : "No WiFi", "", "bad"];
-      const temp = sys.cpu_temp_c;
-      const level = v.level, pct = level == null ? null : Math.max(0, Math.min(100, level));
-      const meter = h("div", { class: "meter" }, h("i", { style: "width:" + (v.muted ? 0 : pct || 0) + "%" }));
-      const kids = [
-        tile("sendspin", "Player", player[0], p.name + (p.installed ? " · v" + p.installed : ""), player[1]),
-        tile("audio", "Audio output", { system: "System output", i2s: "I²S DAC", bluetooth: "Bluetooth" }[o.type], o.label),
-        tile("sendspin", "Volume", v.muted ? "Muted" : pct == null ? "—" : pct + "%", pct == null ? "Not set yet" : null, null, pct == null ? null : meter),
-        tile("wifi", "Network", net[0], net[1], net[2]),
-        tile("audio", "Bluetooth", bt ? bt.name : "No speaker", bt ? (bt.connected ? "Connected" : "Not connected") : "None selected", bt ? (bt.connected ? "ok" : "warn") : null),
-        tile("system", "CPU temperature", temp == null ? "—" : temp + " °C", null, temp == null ? null : temp >= 80 ? "bad" : temp >= 70 ? "warn" : "ok"),
-        tile("system", "Uptime", uptime(sys.uptime_s)),
-        tile("system", "Memory", sys.mem_avail_kb ? bytes(sys.mem_avail_kb * 1024) + " free" : "—", sys.mem_total_kb ? "of " + bytes(sys.mem_total_kb * 1024) : null)
-      ];
-      grid.textContent = "";
-      grid.append(...kids);
+      if (w.connected) net = [w.ssid, "ok", [w.ip, w.signal != null ? w.signal + "%" : null].filter(Boolean).join(" · ")];
+      else if (w.hotspot) net = ["Setup hotspot", "warn", "Join it and open 10.42.0.1"];
+      else if (w.ethernet) net = ["Ethernet", "ok", w.ethernet.ip];
+      else net = [w.available ? "Not connected" : "No WiFi", "bad", ""];
+      const temp = sys.cpu_temp_c, tdot = temp == null ? null : temp >= 80 ? "bad" : temp >= 70 ? "warn" : "ok";
+      const pct = v.level == null ? null : Math.max(0, Math.min(100, v.level));
+      const volume = v.muted ? "Muted" : pct == null ? "Not set yet" : pct + "%";
+
+      // one line that says whether anything needs attention
+      const issues = [];
+      if (player[1] !== "ok") issues.push("The player is " + player[0].toLowerCase());
+      if (!w.connected && !w.ethernet) issues.push(w.hotspot ? "Running as a setup hotspot" : "Not connected to a network");
+      if (bt && !bt.connected) issues.push("The Bluetooth speaker is not connected");
+      if (tdot === "bad") issues.push("The CPU is very hot");
+      banner.className = "summary " + (issues.length ? "warn" : "ok");
+      banner.textContent = "";
+      banner.append(h("i", { class: "dot " + (issues.length ? "warn" : "ok") }),
+        h("span", {}, issues.length ? issues.join(" · ") : "Everything is running"));
+
+      groups.textContent = "";
+      groups.append(
+        group("Player", "sendspin", [
+          item("Status", player[0], player[1]),
+          item("Name", p.name, null, p.installed ? "Sendspin v" + p.installed : null),
+          item("Audio output", { system: "System output", i2s: "I²S DAC", bluetooth: "Bluetooth" }[o.type] + " · " + o.label),
+          item("Volume", volume),
+          pct == null || v.muted ? null : h("div", { class: "meter" }, h("i", { style: "width:" + pct + "%" }))
+        ].filter(Boolean)),
+        group("Connections", "wifi", [
+          item("Network", net[0], net[1], net[2]),
+          item("Bluetooth speaker", bt ? bt.name : "None selected", bt ? (bt.connected ? "ok" : "warn") : null, bt ? (bt.connected ? "Connected" : "Not connected") : null)
+        ]),
+        group("Device", "system", [
+          item("CPU temperature", temp == null ? "—" : temp + " °C", tdot),
+          item("Uptime", uptime(sys.uptime_s)),
+          item("Memory", sys.mem_avail_kb ? bytes(sys.mem_avail_kb * 1024) + " free" : "—", null, sys.mem_total_kb ? "of " + bytes(sys.mem_total_kb * 1024) : null)
+        ]));
     };
     const d0 = await api("/api/home");
     paint(d0);
-    if (d0.system.reboot_required) chip("Restart needed to finish updates", "power");
+    if (d0.system.reboot_required) chip("Restart needed to finish updates", "system");
     state.timer = setInterval(async () => {
-      if (!grid.isConnected) return clearInterval(state.timer);
-      try { paint(await api("/api/home")); } catch (e) { /* the Pi may be rebooting */ }
+      if (!groups.isConnected) return clearInterval(state.timer);
+      try { paint(await api("/api/home")); } catch (e) { /* the Pi may be restarting */ }
     }, 10000);
     // updates are slow to look up: show them as chips when they arrive
     api("/api/system/upgradable").then(u => { const n = u.packages.length; if (n) chip(n + " system update" + (n > 1 ? "s" : "") + " available", "system"); }).catch(() => {});
@@ -477,37 +509,78 @@ const views = {
     await audioOutputPanel(host);
   },
   async wifi(main) {
-    const card = h("div", { class: "card" }, h("p", { class: "mut" }, "Checking the network…"));
-    main.append(card);
+    const now = h("div", { class: "card" }, h("p", { class: "mut" }, "Checking the network…"));
+    main.append(now);
     const w = await api("/api/wifi");
-    card.textContent = "";
-    if (!w.available) return card.append(h("p", { class: "err" }, "No WiFi interface found (NetworkManager required)."));
-    card.append(h("div", { class: "row" }, "Current", h("span", {}, w.hotspot ? "Setup hotspot “" + w.hotspot_ssid + "” active (" + "10.42.0.1)" : (w.current_ssid || "not connected via WiFi"))));
-    w.connections.forEach(c => card.append(h("div", { class: "row" }, c.name + " (" + (c.type === "802-3-ethernet" ? "ethernet" : "wifi") + ")", h("span", { class: "mut" }, c.ip || ""))));
-    if (w.last_connect.state !== "idle") card.append(h("p", { class: w.last_connect.state === "failed" ? "err" : "okmsg" }, w.last_connect.message));
+    now.textContent = "";
+    if (!w.available) return now.append(h("p", { class: "err" }, "No WiFi interface found (NetworkManager required)."));
+    const wifiConn = w.connections.find(c => c.type !== "802-3-ethernet");
+    const eth = w.connections.find(c => c.type === "802-3-ethernet");
+    const connected = !!w.current_ssid;
+    const meta = h("div", { class: "net-meta" }, w.hotspot ? "Join it with your phone and open http://10.42.0.1/"
+      : connected ? (wifiConn && wifiConn.ip) || "" : "Choose a network below to connect.");
+    const notice = h("div", {});
+    now.append(
+      h("div", { class: "eyebrow" }, w.hotspot ? "Setup hotspot" : connected ? "Connected to" : "Not connected"),
+      h("div", { class: "net-name" }, h("i", { class: "dot " + (connected ? "ok" : w.hotspot ? "warn" : "bad") }),
+        h("span", {}, w.hotspot ? w.hotspot_ssid : connected ? w.current_ssid : "No WiFi network")),
+      meta,
+      eth ? h("div", { class: "net-meta" }, "Also on ethernet" + (eth.ip ? " · " + eth.ip : "")) : null,
+      notice);
+    if (w.last_connect.state === "failed") notice.append(h("div", { class: "callout" }, w.last_connect.message));
+
+    // ---- available networks (tap one to join it)
     const list = h("div", {});
-    const ssid = h("input", { placeholder: "SSID" }), pw = h("input", { type: "password", placeholder: "Password (blank for open)" });
-    const hid = h("input", { type: "checkbox" });
-    const connect = async () => {
-      if (!ssid.value) return alert("Enter an SSID");
-      await api("/api/wifi/connect", { ssid: ssid.value, password: pw.value, hidden: hid.checked });
-      alert(w.hotspot ? "Connecting… this hotspot will drop. Rejoin your normal WiFi and open http://" + state.status.system.hostname + ".local – if it fails, the hotspot comes back in about a minute." : "Connecting… reload in a few seconds to check.");
-      setTimeout(() => render(), 4000);
+    let open = null;
+    const closeForm = () => { if (open) { open.remove(); open = null; } };
+    const showForm = (n, after) => {
+      closeForm();
+      const nameIn = n ? null : h("input", { placeholder: "Network name" });
+      const secure = n ? n.security !== "open" : true;
+      const pw = secure ? h("input", { type: "password", placeholder: "Password", autocomplete: "off" }) : null;
+      const join = async () => {
+        const ssid = n ? n.ssid : nameIn.value.trim();
+        if (!ssid) return tell("Enter the network name");
+        await api("/api/wifi/connect", { ssid, password: pw ? pw.value : "", hidden: !n });
+        closeForm();
+        if (w.hotspot) tell("Connecting… this hotspot will drop. Rejoin your normal WiFi and open http://" + state.status.system.hostname + ".local. If it fails, the hotspot comes back in about a minute.");
+        else { notice.textContent = ""; notice.append(h("div", { class: "flash" }, "Connecting to " + ssid + "…")); setTimeout(() => render(), 6000); }
+      };
+      // Connect is only the main action when there is no connection yet
+      open = h("div", { class: "join" }, h("b", {}, n ? "Join " + n.ssid : "Join a hidden network"), nameIn, pw,
+        h("div", {}, btn("Connect", join, connected ? "sec" : ""), btn("Cancel", closeForm, "sec")));
+      after.after(open);
+      const first = nameIn || pw;
+      if (first) first.focus();
     };
-    const scan = async b => {
+    const scan = async () => {
+      closeForm();
       list.textContent = "Scanning…";
       const r = await api("/api/wifi/scan");
       list.textContent = "";
       if (r.error) list.append(h("p", { class: "mut" }, r.error));
-      r.networks.forEach(n => list.append(h("div", { class: "row pick", onclick: () => { ssid.value = n.ssid; pw.focus(); } },
-        h("span", {}, n.ssid, n.in_use ? " (connected)" : ""), h("span", { class: "mut" }, n.signal + "% · " + n.security))));
+      const cur = r.networks.find(n => n.in_use);
+      if (cur && connected) meta.textContent = ((wifiConn && wifiConn.ip) || "") + " · " + cur.signal + "% signal";
+      r.networks.filter(n => !n.in_use).forEach(n => {
+        const row = h("div", { class: "row pick" }, h("span", {}, n.ssid, n.security !== "open" ? h("small", { class: "lock" }, "secured") : null), h("span", { class: "mut" }, n.signal + "%"));
+        row.addEventListener("click", () => showForm(n, row));
+        list.append(row);
+      });
+      if (!list.children.length) list.append(h("p", { class: "mut" }, "No other networks found."));
     };
-    card.append(h("h3", {}, "Available networks"), list, btn("Scan", scan, "sec"),
-      h("h3", {}, "Connect"), ssid, pw, h("label", {}, hid, "Hidden network"), btn("Connect", connect));
-    if (w.saved.length) {
-      card.append(h("h3", {}, "Saved networks"));
-      w.saved.forEach(n => card.append(h("div", { class: "row" }, n, btn("Forget", async () => { if (confirm("Forget " + n + "?")) { await api("/api/wifi/forget", { name: n }); render(); } }, "sec bad"))));
-    }
+    const hiddenLink = h("button", { class: "link" }, "Join a hidden network");
+    hiddenLink.addEventListener("click", () => showForm(null, hiddenLink));
+    main.append(h("div", { class: "card" },
+      h("div", { class: "section-head" }, h("h2", {}, connected ? "Other networks" : "Networks"), btn("Scan", scan, "sec")),
+      list, h("div", { class: "hidden-row" }, hiddenLink)));
+
+    // ---- saved networks
+    if (w.saved.length) main.append(h("div", { class: "card" }, h("h2", {}, "Saved networks"),
+      ...w.saved.map(n => {
+        const forget = h("button", { class: "link bad" }, "Forget");
+        forget.addEventListener("click", async () => { if (await ask("Forget " + n + "? The Pi will no longer join it automatically.", { yes: "Forget", danger: true })) { await api("/api/wifi/forget", { name: n }); render(); } });
+        return h("div", { class: "row" }, h("span", {}, n, n === w.current_ssid ? h("span", { class: "tag ok", style: "margin-left:8px" }, "connected") : null), forget);
+      })));
     scan();
   },
   async system(main) {
@@ -518,7 +591,7 @@ const views = {
     // System updates card: buttons are there at once, the package status and automatic-update section fill in later
     const statusSlot = h("div", {}, h("p", { class: "mut" }, "Checking for updates…"));
     const updateNow = btn("Update now", async () => {
-      if (!confirm("Install all updates now? Keep power connected; this can take a long time on a Pi Zero.")) return;
+      if (!(await ask("Install all updates now? Keep power connected; this can take a long time on a Pi Zero.", { yes: "Install updates" }))) return;
       log.textContent = ""; const r = await api("/api/system/apt-upgrade", {}); log.append(jobView(r.job, () => setTimeout(() => render(), 1500)));
     });
     updateNow.hidden = true;
@@ -526,13 +599,13 @@ const views = {
       const n = up.packages.length;
       statusSlot.textContent = "";
       statusSlot.append(h("div", { class: "row" }, h("span", {}, n ? n + " update" + (n > 1 ? "s" : "") + " available" : "Everything is up to date"),
-        h("span", { class: "tag " + (n ? "warn" : "ok") }, n ? "available" : "up to date")),
-        n ? h("details", { class: "more" }, h("summary", {}, "View packages"), h("pre", {}, up.packages.map(p => p.name + "  " + p.old + " → " + p.new).join("\n"))) : null);
+        h("span", { class: "tag " + (n ? "warn" : "ok") }, n ? "available" : "up to date")));
+      if (n) statusSlot.append(h("details", { class: "more" }, h("summary", {}, "View packages"), h("pre", {}, up.packages.map(p => p.name + "  " + p.old + " → " + p.new).join("\n"))));
       updateNow.hidden = !n;
     }).catch(e => { statusSlot.textContent = e.message; });
     const autoSlot = h("div", { class: "divider" }, h("p", { class: "mut" }, "Loading automatic updates…"));
     auP.then(au => { autoSlot.textContent = ""; autoSlot.append(autoUpdatesSection(au)); }).catch(() => autoSlot.remove());
-    if (sys.reboot_required) main.append(h("div", { class: "callout" }, "A restart is needed to finish updates. Use the Power page when you're ready."));
+    if (sys.reboot_required) main.append(h("div", { class: "callout" }, "A restart is needed to finish updates. Use Restart in the Power section below when you're ready."));
     main.append(
       lazyCard("SendspinPi updates", () => suP, selfUpdateCard, true),
       h("div", { class: "card" }, h("h2", {}, "System updates"), statusSlot,
@@ -540,21 +613,20 @@ const views = {
           btn("Check for updates", async () => { log.textContent = ""; const r = await api("/api/system/apt-update", {}); log.append(jobView(r.job, () => setTimeout(() => render(), 1500))); }, "sec"),
           updateNow),
         log, autoSlot),
+      h("div", { class: "card" }, h("h2", {}, "Power"),
+        h("p", {}, "Shutting down needs physical access to power the Pi back on."),
+        btn("Restart", async () => { if (await ask("Restart the Pi now?", { yes: "Restart" })) { await api("/api/power", { action: "reboot" }); tell("Restarting… reload in about a minute."); } }, "sec"),
+        btn("Shut down", async () => { if (await ask("Shut down the Pi? You will need to unplug and replug power to start it again.", { yes: "Shut down", danger: true })) { await api("/api/power", { action: "shutdown" }); tell("Shutting down."); } }, "sec bad")),
       h("div", { class: "card" }, h("h2", {}, "Reset"),
         h("p", {}, "Erase this player's settings and run setup again from the start."),
         btn("Reset everything…", resetDialog, "sec bad")));
-  },
-  power(main) {
-    main.append(h("div", { class: "card" }, h("p", {}, "Shutting down needs physical access to power the Pi back on."),
-      btn("Reboot", async () => { if (confirm("Reboot the Pi now?")) { await api("/api/power", { action: "reboot" }); alert("Rebooting… reload in about a minute."); } }),
-      btn("Shut down", async () => { if (confirm("Shut down the Pi? You will need to unplug/replug power to start it again.")) { await api("/api/power", { action: "shutdown" }); alert("Shutting down."); } }, "bad")));
   },
   account(main) {
     const u = h("input", { value: state.me, autocomplete: "username" });
     const cur = h("input", { type: "password", autocomplete: "current-password" }), np = h("input", { type: "password", autocomplete: "new-password", placeholder: "Leave blank to keep" });
     main.append(h("div", { class: "card" }, h("h2", {}, "Login credentials"), h("label", {}, "Username"), u, h("label", {}, "New password (min 8 chars)"), np,
       h("label", {}, "Current password (required)"), cur,
-      btn("Save", async () => { const r = await api("/api/account", { username: u.value, new_password: np.value, current_password: cur.value }); state.me = r.username; alert("Saved"); render(); })));
+      btn("Save", async () => { const r = await api("/api/account", { username: u.value, new_password: np.value, current_password: cur.value }); state.me = r.username; tell("Saved"); render(); })));
   }
 };
 
@@ -567,7 +639,7 @@ function autoUpdatesSection(u) {
   const sub = h("small", {}, "Checks daily and installs in the background");
   const save = async patch => {
     try { Object.assign(u, await api("/api/updates", patch)); msg.textContent = " Saved"; setTimeout(() => { msg.textContent = ""; }, 2000); }
-    catch (e) { alert(e.message); }
+    catch (e) { tell(e.message); }
     paint();
   };
   const choice = (type, name, checked, title, desc, onchange) => {
@@ -622,11 +694,11 @@ function selfUpdateCard(u) {
     }
   };
   const auto = h("input", { type: "checkbox", class: "switch", role: "switch", "aria-label": "Update SendspinPi automatically", checked: u.auto });
-  auto.addEventListener("change", () => api("/api/selfupdate", { auto: auto.checked }).catch(e => { alert(e.message); auto.checked = !auto.checked; }));
+  auto.addEventListener("change", () => api("/api/selfupdate", { auto: auto.checked }).catch(e => { tell(e.message); auto.checked = !auto.checked; }));
   card.append(status, h("div", { style: "margin-top:8px" },
     btn("Check for updates", async () => { Object.assign(u, await api("/api/selfupdate?check=1")); render(); }, "sec"),
     u.available ? btn("Update now", async () => {
-      if (!confirm("Update SendspinPi to " + u.latest + "? The page restarts for about a minute.")) return;
+      if (!(await ask("Update SendspinPi to " + u.latest + "? The page restarts for about a minute.", { yes: "Update" }))) return;
       await api("/api/selfupdate/run", {});
       status.textContent = ""; status.append(h("p", {}, "Updating… this takes a few minutes. The page reloads when it's done."));
       watch();
@@ -641,14 +713,32 @@ function selfUpdateCard(u) {
 async function loadLogs(el) { try { el.textContent = ""; el.append(h("pre", {}, (await api("/api/sendspin/logs")).logs || "(empty)")); } catch (e) { el.textContent = e.message; } }
 async function boot_keep() { state.status = await api("/api/status"); render(); }
 
-// Minimal modal dialog (native <dialog>)
-function modal(build) {
+// In-app dialogs (native <dialog>) instead of the browser's own popups
+function modal(build, onClose) {
   const dlg = h("dialog", { class: "modal" });
-  const close = () => { dlg.close(); dlg.remove(); };
-  dlg.addEventListener("cancel", () => dlg.remove());
+  let done = false;
+  const close = v => { if (done) return; done = true; dlg.close(); dlg.remove(); if (onClose) onClose(v); };
+  dlg.addEventListener("cancel", e => { e.preventDefault(); close(false); });   // Esc
   dlg.append(build(close));
   document.body.append(dlg);
   dlg.showModal();
+}
+// ask("Forget it?", { yes: "Forget", danger: true }) -> Promise<boolean>
+function ask(message, o) {
+  o = o || {};
+  return new Promise(res => modal(close => h("div", {},
+    o.title ? h("h2", {}, o.title) : null,
+    h("p", { class: "dlg-text" }, message),
+    h("div", { class: "dlg-actions" }, btn("Cancel", () => close(false), "sec"),
+      btn(o.yes || "Continue", () => close(true), o.danger ? "bad" : ""))), v => res(!!v)));
+}
+// tell("Saved") -> Promise<void>
+function tell(message, o) {
+  o = o || {};
+  return new Promise(res => modal(close => h("div", {},
+    o.title ? h("h2", {}, o.title) : null,
+    h("p", { class: "dlg-text" }, message),
+    h("div", { class: "dlg-actions" }, btn("OK", () => close(true)))), () => res()));
 }
 
 function resetDialog() {
@@ -665,8 +755,8 @@ function resetDialog() {
         close();
         state.status = await api("/api/status");
         state.wiz = 0; state.kind = null;
-        if (r.forgot_wifi) alert("Reset done. The Pi is leaving your WiFi and will start the SendspinPi-Setup hotspot. Join it and open http://10.42.0.1/ to set it up again.");
-        else if (r.reboot_recommended) alert("Reset done. Restart the Pi (Power page) so the DAC setting is removed.");
+        if (r.forgot_wifi) tell("Reset done. The Pi is leaving your WiFi and will start the SendspinPi-Setup hotspot. Join it and open http://10.42.0.1/ to set it up again.");
+        else if (r.reboot_recommended) tell("Reset done. Restart the Pi (System page, Power section) so the DAC setting is removed.");
         go("wizard");
       }, "bad"))));
 }

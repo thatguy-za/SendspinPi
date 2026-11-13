@@ -53,6 +53,7 @@ find "$APP/app" -name __pycache__ -prune -exec rm -rf {} +
 mkdir -p "$APP/hooks"
 install -m 755 "$SRC/scripts/set-volume.sh" "$APP/hooks/set-volume.sh"
 install -m 755 "$SRC/scripts/wait-bt.sh" "$APP/hooks/wait-bt.sh"
+install -m 755 "$SRC/scripts/sendspin-player.py" "$APP/hooks/sendspin-player.py"
 chmod -R a+rX "$APP"
 # Only restart BlueALSA on first install (avoids interrupting Bluetooth audio on updates)
 [ "$BA_NEW" = 1 ] && { systemctl try-restart bluealsa 2>/dev/null || true; }

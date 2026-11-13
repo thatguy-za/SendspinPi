@@ -75,7 +75,7 @@ def status():
         "iface": dev,
         "hotspot": hotspot_active() if dev else False,
         "hotspot_ssid": config.load()["hotspot_ssid"],
-        "connections": [dict(a, ip=ip_of(a["device"])) for a in act],
+        "connections": [dict(a, ip=(ip_of(a["device"]) or "").split("/")[0] or None) for a in act],
         "current_ssid": wifi_act[0]["name"] if wifi_act else None,
         "saved": saved(),
         "last_connect": dict(_last_connect),

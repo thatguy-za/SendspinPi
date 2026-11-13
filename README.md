@@ -8,7 +8,7 @@ A lightweight web UI for running the [Sendspin CLI](https://github.com/Sendspin/
 - **Audio output**: choose one output type (system outputs, an I²S DAC HAT, or a Bluetooth speaker), with a test tone.
 - **OS updates**: refresh package lists and run full upgrades with live output.
 - **WiFi**: scan, connect, forget networks. If the Pi has no network, it starts a setup hotspot.
-- **Power**: reboot and shut down.
+- **Power**: restart and shut down, on the System page.
 - Mobile-first UI, no frameworks, Python standard library only (about 20–30 MB RAM).
 
 ## Requirements
@@ -43,13 +43,12 @@ Every page has its own address, for example `http://<hostname>.local/sendspin`:
 
 | Page | Address | What it does |
 |---|---|---|
-| Home | `/` | Live status: player, audio output, volume, WiFi, Bluetooth speaker, CPU temperature, uptime, memory |
+| Home | `/` | One summary line, then Player, Connections and Device cards: status, audio output, volume, WiFi, Bluetooth speaker, CPU temperature, uptime, memory |
 | Setup | `/setup` | The setup guide. Hidden once setup is complete |
 | Sendspin | `/sendspin` | Install and update Sendspin, start and stop the player, logs |
 | Audio output | `/audio` | Choose one output: system outputs, an I²S DAC HAT, or a Bluetooth speaker |
-| WiFi | `/wifi` | Join, forget and scan networks |
-| System | `/system` | OS and SendspinPi updates, automatic updates, and **Reset** |
-| Power | `/power` | Reboot and shut down |
+| WiFi | `/wifi` | Shows the network you're connected to; join other networks, forget saved ones |
+| System | `/system` | OS and SendspinPi updates, automatic updates, **Power** (restart and shut down) and **Reset** |
 | Account | `/account` | Change the login |
 
 **Reset** (System page) returns the player to a fresh start and reopens the setup guide. It erases the player's name, audio output and volume, all Bluetooth pairings, the I²S DAC setting and the automatic-update settings. You can also tick a box to forget saved WiFi networks too. Your login and the installed Sendspin version are kept.
@@ -84,6 +83,10 @@ In **System → Automatic updates**, switch on "Install updates automatically" a
 ### SendspinPi updates
 
 **System → SendspinPi updates** shows the installed version and whether a newer release exists. **Update now** installs it (the page restarts for about a minute and your settings are kept). Switch on "Update SendspinPi automatically" to check every few hours and install new releases without you doing anything. It's off by default, and it only installs tagged [GitHub releases](https://github.com/thatguy-za/SendspinPi/releases), never unreleased code.
+
+### Two-way volume (beta)
+
+By default the Pi scales the volume itself, so the speaker's own volume buttons don't affect what Sendspin shows. On the **Audio output** page, with a Bluetooth speaker selected, switch on **Two-way volume (beta)** and the speaker's own volume is used instead: its buttons move the slider in Music Assistant, and the slider moves the speaker. The speaker must support Bluetooth absolute volume (many do). The player restarts when you switch it. It relies on Sendspin's internals, so if a Sendspin update ever changes them, the player quietly falls back to normal volume control.
 
 ## Updating
 

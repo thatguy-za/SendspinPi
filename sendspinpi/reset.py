@@ -20,6 +20,10 @@ def factory_reset(forget_wifi=False):
         pass
     # 3. Bluetooth speakers and our device definition
     bluetooth.forget_all()
+    try:
+        os.remove(bluetooth.NATIVE_FLAG)
+    except OSError:
+        pass
     # 4. I2S DAC overlay (needs a restart to take effect)
     overlay_was_set = bool(audio.current_overlay())
     if overlay_was_set:
@@ -33,7 +37,7 @@ def factory_reset(forget_wifi=False):
     cfg = config.load()
     for k in CONFIG_KEYS:
         cfg.pop(k, None)
-    cfg.update(setup_complete=False, selfupdate_auto=False, bluetooth_auto_reconnect=True)
+    cfg.update(setup_complete=False, selfupdate_auto=False, bluetooth_auto_reconnect=True, bt_native_volume=False)
     config.save(cfg)
     util.cache_clear()
     # 7. optionally forget saved WiFi networks, after the reply has gone out (it drops the connection)

@@ -96,6 +96,18 @@ def read_settings():
         return {}
 
 
+VOLFILE = os.path.join(SENDSPIN_HOME, "last-volume")
+
+
+def last_volume():
+    """Volume (0-100) last applied through the Bluetooth volume script, or None."""
+    try:
+        with open(VOLFILE) as f:
+            return max(0, min(100, int(f.read().strip())))
+    except (OSError, ValueError):
+        return None
+
+
 def write_settings(**kw):
     s = read_settings()
     for k, v in kw.items():

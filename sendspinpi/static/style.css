@@ -283,3 +283,41 @@ dialog.modal{width:calc(100% - 32px);max-width:420px;padding:22px;border:1px sol
 dialog.modal::backdrop{background:rgba(0,0,0,.5)}
 ul.plain{margin:0 0 14px;padding-left:18px;color:var(--mut)}
 .dlg-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:16px}
+
+/* ---- audio output: quieter layout ---- */
+.current{display:flex;align-items:center;gap:8px;margin:0 0 14px;font-size:14px;color:var(--mut)}
+.current b{font-weight:550;color:var(--fg)}
+.add-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:6px;padding:14px 0 6px;border-top:1px solid var(--line)}
+.add-row span{font-weight:550}
+.btpanel .group-title{margin:14px 0 4px}
+.btpanel .dev-row:first-child{border-top:0}
+.btpanel .dev-row{padding:14px 0}
+
+/* ---- wifi ---- */
+.net-name{display:flex;align-items:center;gap:10px;margin:2px 0 4px;font-size:24px;font-weight:600;letter-spacing:-.02em;min-width:0}
+.net-name span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.net-name .dot{width:10px;height:10px}
+.net-meta{color:var(--mut);font-size:14px}
+.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}
+.section-head h2{margin:0}
+.lock{margin-left:8px;color:var(--mut);font-size:12px}
+.hidden-row{padding-top:8px}
+.join{margin:2px 0 8px;padding:14px;border-radius:12px;background:var(--sunk)}
+.join input{margin-bottom:10px}
+.join b{display:block;margin-bottom:8px;font-weight:600}
+
+/* ---- in-app dialogs ---- */
+dialog.modal h2{margin:0 0 8px;font-size:17px}
+.dlg-text{margin:0;color:var(--fg)}
+
+/* ---- home: summary line and grouped cards ---- */
+.summary{display:flex;align-items:center;gap:10px;margin-bottom:14px;padding:12px 16px;border-radius:12px;background:var(--surface);border:1px solid var(--line);font-weight:550}
+.summary.warn{border-color:var(--warn)}
+.kv .row>span:first-child{color:var(--mut)}
+.kv .row>span.val{display:flex;flex-direction:column;align-items:flex-end;gap:2px;color:var(--fg);font-weight:550;min-width:0}
+.kv .row>span.val{flex-direction:row;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px}
+.kv .row>span.val>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.kv .row>span.val>small{flex-basis:100%;text-align:right;color:var(--mut);font-weight:400;font-size:13px}
+.group-link{font-size:13px;color:var(--mut);text-decoration:none}
+.group-link:hover{color:var(--fg)}
+.kv .meter{margin:0 0 8px}

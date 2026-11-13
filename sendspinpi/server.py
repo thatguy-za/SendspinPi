@@ -112,6 +112,12 @@ def home(h, q, body):
     if mac:
         d = bluetooth.info(mac)
         bt = {"mac": mac, "name": d["name"] if d else mac, "connected": bool(d and d["connected"])}
+    output = audio.output_summary()
+    volume = {"level": sp.get("player_volume"), "muted": bool(sp.get("player_muted"))}
+    if output["type"] == "bluetooth":
+        fresh = sendspin_ctl.last_volume()   # Sendspin's own settings file lags by about a minute
+        if fresh is not None:
+            volume = {"level": fresh, "muted": fresh == 0}
     return {
         "system": {"hostname": sysi["hostname"], "uptime_s": sysi["uptime_s"], "cpu_temp_c": sysi["cpu_temp_c"],
                    "mem_total_kb": sysi["mem_total_kb"], "mem_avail_kb": sysi["mem_avail_kb"],
@@ -119,9 +125,9 @@ def home(h, q, body):
         "wifi": wifi.summary(),
         "player": {"installed": sendspin_ctl.installed_version(), "name": sp.get("name") or sysi["hostname"],
                    "service": sendspin_ctl.service_state()},
-        "output": audio.output_summary(),
+        "output": output,
         "bluetooth": bt,
-        "volume": {"level": sp.get("player_volume"), "muted": bool(sp.get("player_muted"))},
+        "volume": volume,
     }
 
 
@@ -389,6 +395,12 @@ def bt_forget(h, q, body):
 def bt_auto(h, q, body):
     config.update(bluetooth_auto_reconnect=bool(body.get("enabled")))
     return {"ok": True}
+
+
+@route("POST", "/api/bluetooth/native-volume")
+def bt_native_volume(h, q, body):
+    bluetooth.set_native_volume(bool(body.get("enabled")))
+    return {"ok": True, "enabled": bluetooth.native_volume_enabled()}
 
 
 @route("POST", "/api/bluetooth/use")

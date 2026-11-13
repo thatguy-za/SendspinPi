@@ -20,6 +20,7 @@ DEFAULTS = {
     "hotspot_enabled": True,
     "bluetooth_auto_reconnect": True,
     "selfupdate_auto": False,
+    "bt_native_volume": False,
     "hotspot_ssid": "SendspinPi-Setup",
     "hotspot_psk": "",
 }
