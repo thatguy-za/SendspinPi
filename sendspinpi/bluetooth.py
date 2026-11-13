@@ -1,10 +1,30 @@
 """Bluetooth speaker management (BlueZ via bluetoothctl) for BlueALSA output."""
+import os
 import re
 import threading
 import time
 
 from . import config, sendspin_ctl
 from .util import run
+
+# Sendspin only accepts custom ALSA names that appear in `aplay -L`, so the speaker is
+# exposed as a named, hinted ALSA device defined here.
+BT_PCM = "sendspin_bt"
+BT_CONF = os.environ.get("SENDSPINPI_BTCONF", "/etc/alsa/conf.d/99-sendspinpi-bluetooth.conf")
+BT_CONF_TEMPLATE = """# Managed by SendspinPi - changes here are overwritten.
+pcm.%(name)s {
+    type plug
+    slave.pcm {
+        type bluealsa
+        device "%(mac)s"
+        profile "a2dp"
+    }
+    hint {
+        show on
+        description "Bluetooth speaker (SendspinPi)"
+    }
+}
+"""
 
 MAC_RE = re.compile(r"^[0-9A-F]{2}(:[0-9A-F]{2}){5}$")
 
@@ -50,9 +70,20 @@ def info(mac):
             "known_type": bool(icon)}
 
 
+def _conf_mac():
+    try:
+        with open(BT_CONF) as f:
+            m = re.search(r'device "([0-9A-Fa-f:]{17})"', f.read())
+        return m.group(1).upper() if m else None
+    except OSError:
+        return None
+
+
 def selected_mac():
     dev = sendspin_ctl.read_settings().get("audio_device", "")
-    m = re.search(r"DEV=([0-9A-Fa-f:]{17})", dev)
+    if dev == BT_PCM:
+        return _conf_mac()
+    m = re.search(r"DEV=([0-9A-Fa-f:]{17})", dev)  # older inline form
     return m.group(1).upper() if m else None
 
 
@@ -131,18 +162,38 @@ def _restart_player():
         sendspin_ctl.service_action("restart")
 
 
+def _write_conf(mac):
+    os.makedirs(os.path.dirname(BT_CONF), exist_ok=True)
+    with open(BT_CONF, "w") as f:
+        f.write(BT_CONF_TEMPLATE % {"name": BT_PCM, "mac": mac})
+    os.chmod(BT_CONF, 0o644)
+
+
 def use(mac):
     cur = sendspin_ctl.read_settings().get("audio_device", "")
-    if cur and not cur.startswith("bluealsa"):
+    if cur and cur != BT_PCM and not cur.startswith("bluealsa"):
         config.update(previous_audio_device=cur)
-    sendspin_ctl.set_audio_device("bluealsa:DEV=%s,PROFILE=a2dp" % mac)
+    _write_conf(mac)
+    sendspin_ctl.set_audio_device(BT_PCM)
     _restart_player()
 
 
 def unuse():
     cfg = config.load()
     sendspin_ctl.set_audio_device(cfg.get("previous_audio_device", ""))
+    try:
+        os.remove(BT_CONF)
+    except OSError:
+        pass
     _restart_player()
+
+
+def migrate():
+    """Older versions stored an inline bluealsa:DEV=... device that Sendspin rejects."""
+    dev = sendspin_ctl.read_settings().get("audio_device", "")
+    m = re.match(r"bluealsa:DEV=([0-9A-Fa-f:]{17})", dev)
+    if m:
+        use(m.group(1).upper())
 
 
 def forget(mac):

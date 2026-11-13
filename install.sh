@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SendspinPi one-line installer:
 #   curl -fsSL https://raw.githubusercontent.com/thatguy-za/SendspinPi/main/install.sh | sudo bash
-# Pin a version:  ... | sudo SENDSPINPI_REF=v0.0.2 bash
+# Pin a version:  ... | sudo SENDSPINPI_REF=v0.0.3 bash
 # Extra options (e.g. --reset-password):  ... | sudo bash -s -- --reset-password
 set -euo pipefail
 

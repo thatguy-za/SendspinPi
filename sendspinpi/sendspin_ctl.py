@@ -20,6 +20,8 @@ UV_ENV = {
     "UV_PYTHON_INSTALL_DIR": os.path.join(BASE, "python"),
     "UV_CACHE_DIR": os.path.join(BASE, "uv-cache"),
     "UV_NO_PROGRESS": "1",
+    # keeps uv from warning that its tool bin dir isn't on PATH (the service uses the full path)
+    "PATH": os.path.join(BASE, "bin") + os.pathsep + os.environ.get("PATH", ""),
 }
 ACTIONS = {"start", "stop", "restart", "enable", "disable"}
 
@@ -108,7 +110,7 @@ def set_audio_device(dev):
     """Set the output device. Bluetooth (BlueALSA) outputs get the volume hook so
     Sendspin's volume drives the speaker; other outputs drop it."""
     return write_settings(audio_device=dev,
-                          hook_set_volume=HOOK if dev.startswith("bluealsa") else "")
+                          hook_set_volume=HOOK if (dev == "sendspin_bt" or dev.startswith("bluealsa")) else "")
 
 
 def info():

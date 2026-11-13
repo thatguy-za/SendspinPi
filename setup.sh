@@ -8,29 +8,6 @@ SRC="$(cd "$(dirname "$0")" && pwd)"
 APP=/opt/sendspinpi
 export DEBIAN_FRONTEND=noninteractive
 
-# Ask for the web UI password up front (first install, or with --reset-password).
-# Reads from /dev/tty so it also works when piped via `curl | sudo bash`.
-if [[ " $* " == *" --reset-password "* ]] || ! grep -qs '"password_hash": "pbkdf2' /etc/sendspinpi/config.json; then
-  if [ -z "${SENDSPINPI_PASSWORD:-}" ]; then
-    if (: </dev/tty) 2>/dev/null; then
-      echo "Choose a password for the web UI (username: admin)."
-      while :; do
-        read -rsp "Password (min 8 characters): " p1 </dev/tty; echo
-        read -rsp "Repeat password: " p2 </dev/tty; echo
-        [ "${#p1}" -ge 8 ] || { echo "Too short, try again."; continue; }
-        [ "$p1" = "$p2" ] || { echo "Passwords do not match, try again."; continue; }
-        SENDSPINPI_PASSWORD="$p1"
-        break
-      done
-    else
-      echo "No terminal available: a random password will be generated and shown at the end."
-    fi
-  fi
-else
-  SENDSPINPI_PASSWORD=""
-fi
-export SENDSPINPI_PASSWORD="${SENDSPINPI_PASSWORD:-}"
-
 echo "==> Installing packages"
 apt-get update
 apt-get install -y python3 curl ca-certificates alsa-utils iw libportaudio2 \
@@ -81,6 +58,31 @@ chmod -R a+rX "$APP"
 cp "$SRC/systemd/sendspinpi-web.service" "$SRC/systemd/sendspin.service" /etc/systemd/system/
 
 echo "==> Creating credentials"
+
+# Ask for the web UI password (first install, or with --reset-password).
+# Done last so the long install above runs unattended; the web UI is only started after this.
+# Reads from /dev/tty so it also works when piped via `curl | sudo bash`.
+if [[ " $* " == *" --reset-password "* ]] || ! grep -qs '"password_hash": "pbkdf2' /etc/sendspinpi/config.json; then
+  if [ -z "${SENDSPINPI_PASSWORD:-}" ]; then
+    if (: </dev/tty) 2>/dev/null; then
+      echo "Choose a password for the web UI (username: admin)."
+      while :; do
+        read -rsp "Password (min 8 characters): " p1 </dev/tty; echo
+        read -rsp "Repeat password: " p2 </dev/tty; echo
+        [ "${#p1}" -ge 8 ] || { echo "Too short, try again."; continue; }
+        [ "$p1" = "$p2" ] || { echo "Passwords do not match, try again."; continue; }
+        SENDSPINPI_PASSWORD="$p1"
+        break
+      done
+    else
+      echo "No terminal available: a random password will be generated and shown at the end."
+    fi
+  fi
+else
+  SENDSPINPI_PASSWORD=""
+fi
+export SENDSPINPI_PASSWORD="${SENDSPINPI_PASSWORD:-}"
+
 mkdir -p /etc/sendspinpi
 chmod 700 /etc/sendspinpi
 INIT="$(cd "$APP/app" && python3 -m sendspinpi init "$@")"

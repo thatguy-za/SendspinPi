@@ -24,7 +24,7 @@ On the Pi:
 curl -fsSL https://raw.githubusercontent.com/thatguy-za/SendspinPi/main/install.sh | sudo bash
 ```
 
-The installer asks you to choose a password (twice, at least 8 characters) for the web UI. The username is `admin`. When it finishes it prints the address and the setup hotspot details. You can change the username and password later in the web UI under **Account**.
+The installer runs on its own, then asks you to choose a password (twice, at least 8 characters) for the web UI near the end. Stay close to the terminal, because the web UI doesn't start until you've answered. The username is `admin`. When it finishes it prints the address and the setup hotspot details. You can change the username and password later in the web UI under **Account**.
 
 For unattended installs there's no terminal to ask on, so set `SENDSPINPI_PASSWORD=...` before `bash`, or let it generate a random password, which is shown once at the end.
 

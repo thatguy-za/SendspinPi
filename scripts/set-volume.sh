@@ -5,10 +5,13 @@
 set -u
 
 SETTINGS="${SENDSPINPI_SETTINGS:-/var/lib/sendspin/.config/sendspin/settings-daemon.json}"
+BTCONF="${SENDSPINPI_BTCONF:-/etc/alsa/conf.d/99-sendspinpi-bluetooth.conf}"
 VOL="${*: -1}"
 [[ "$VOL" =~ ^[0-9]+$ ]] && [ "$VOL" -le 100 ] || exit 0
 
-MAC="$(grep -o 'bluealsa:DEV=[0-9A-Fa-f:]*' "$SETTINGS" 2>/dev/null | head -1 | cut -d= -f2)"
+# Only act when the Bluetooth speaker is the selected output.
+grep -q '"audio_device": *"sendspin_bt"' "$SETTINGS" 2>/dev/null || exit 0
+MAC="$(grep -o 'device "[0-9A-Fa-f:]*"' "$BTCONF" 2>/dev/null | head -1 | cut -d'"' -f2)"
 [ -n "$MAC" ] || exit 0
 
 CTL="$(command -v bluealsactl || command -v bluealsa-cli)" || exit 0

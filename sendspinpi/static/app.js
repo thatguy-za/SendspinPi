@@ -38,8 +38,8 @@ const bytes = n => n > 1e9 ? (n / 1e9).toFixed(1) + " GB" : (n / 1e6).toFixed(0)
 const uptime = s => { const d = Math.floor(s / 86400), hr = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return (d ? d + "d " : "") + hr + "h " + m + "m"; };
 
 // Live job log. Returns element; calls onDone(status) when finished.
-function jobView(jobId, onDone) {
-  const pre = h("pre", {}, "Starting…");
+function jobView(jobId, onDone, okText, failText) {
+  const pre = h("pre", {}, "Starting…"), status = h("div", { class: "jobstatus", hidden: true });
   (async () => {
     let since = 0, first = true;
     for (;;) {
@@ -49,14 +49,17 @@ function jobView(jobId, onDone) {
       if (st.lines.length) { pre.append(st.lines.join("\n") + "\n"); pre.scrollTop = pre.scrollHeight; }
       since = st.next;
       if (st.status !== "running") {
-        pre.append(st.status === "ok" ? "\n-- finished --" : "\n-- failed --");
+        const ok = st.status === "ok";
+        status.className = "jobstatus " + (ok ? "ok" : "bad");
+        status.textContent = ok ? (okText || "Done") : (failText || "Failed. See the log above.");
+        status.hidden = false;
         if (onDone) onDone(st.status);
         return;
       }
       await sleep(1000);
     }
   })();
-  return pre;
+  return h("div", {}, pre, status);
 }
 
 // ---------- state / routing
@@ -127,7 +130,7 @@ async function wizard(main) {
   main.append(h("div", { class: "steps" }, WIZ.map((_, i) => h("i", { class: i <= state.wiz ? "on" : "" }))), body);
   const nav = (next, nextLabel = "Next", ok = true) => h("div", { style: "margin-top:12px" },
     state.wiz > 0 ? btn("Back", () => { state.wiz--; render(); }, "sec") : null,
-    btn(nextLabel, async () => { if (next) await next(); state.wiz++; render(); }, ok ? "" : "sec"));
+    btn(nextLabel, async () => { if (next && (await next()) === false) return; state.wiz++; render(); }, ok ? "" : "sec"));
   body.append(h("div", { class: "eyebrow" }, "Step " + (state.wiz + 1) + " of 5"), h("h2", {}, WIZ[state.wiz]));
   const steps = [
     // 1 name
@@ -150,27 +153,44 @@ async function wizard(main) {
       else log.append(btn("Install Sendspin", async b => {
         const r = await api("/api/sendspin/install", {});
         b.style.display = "none";
-        log.append(jobView(r.job, st => { if (st === "ok") ready(); else log.append(h("p", { class: "err" }, "Install failed – check your internet connection and try again."), btn("Retry", () => { render(); })); }));
+        log.append(jobView(r.job, st => { if (st === "ok") ready(); else log.append(btn("Retry", () => { render(); })); }, "Install complete. Sendspin is ready to use.", "Install failed. Check your internet connection and try again."));
       }));
     },
     // 3 audio
     async () => {
       const a = await api("/api/audio");
-      let sel = a.selected || "";
-      body.append(h("p", {}, "Pick where sound should come out. USB DACs and onboard outputs appear automatically. For an I²S HAT/DAC (HiFiBerry, IQaudIO, PCM5102…), choose it below first – the Pi needs a reboot before it shows up."));
-      body.append(overlayPicker(a, () => render()));
-      body.append(h("h3", {}, "Detected outputs"), deviceList(a, v => { sel = v; }, sel),
-        h("p", {}, "Using a Bluetooth speaker instead? "), btn("Set up Bluetooth", () => { state.tab = "bluetooth"; state.tabChosen = true; render(); }, "sec"));
-      const log = h("div", {});
-      body.append(log, h("div", {}, btn("Play test tone", async () => {
-        log.textContent = "";
-        const r = await api("/api/audio/test", { device: sel });
-        log.append(h("p", {}, "Playing a short tone on the left, then right speaker…"), jobView(r.job));
-      }, "sec"), btn("Rescan", () => render(), "sec")),
-        nav(async () => { await api("/api/sendspin/config", { audio_device: sel }); }, "Save & next"));
+      const isBt = a.selected === "sendspin_bt" || (a.selected || "").startsWith("bluealsa");
+      if (!state.audioMode) state.audioMode = isBt ? "bluetooth" : "wired";
+      let sel = isBt ? "" : (a.selected || ""), btInUse = isBt, btDevice = isBt ? a.selected : "";
+      const log = h("div", {}), panel = h("div", {});
+      const seg = h("div", { class: "seg" }, [["wired", "Speakers or DAC"], ["bluetooth", "Bluetooth speaker"]].map(([m, label]) =>
+        h("button", { class: state.audioMode === m ? "on" : "", onclick: () => { state.audioMode = m; render(); } }, label)));
+      const testBtn = getDev => btn("Play test tone", async () => {
+        log.textContent = ""; const r = await api("/api/audio/test", { device: getDev() });
+        log.append(jobView(r.job, null, "Test finished.", "Test failed."));
+      }, "sec");
+      if (state.audioMode === "wired") {
+        panel.append(deviceList(a, v => { sel = v; }, sel),
+          h("details", { class: "more" }, h("summary", {}, "Using an I²S DAC HAT?"), overlayPicker(a, () => render())),
+          testBtn(() => sel), log);
+      } else {
+        const b = await api("/api/bluetooth");
+        if (!b.available) panel.append(h("p", { class: "err" }, b.error || "Bluetooth is not available on this Pi."));
+        else {
+          btInUse = !!b.selected; btDevice = b.selected ? "sendspin_bt" : "";
+          panel.append(btPanel(b, () => render()));
+          if (btInUse) panel.append(testBtn(() => btDevice), log);
+        }
+      }
+      body.append(h("p", {}, "Where should the sound come out?"), seg, panel,
+        nav(async () => {
+          if (state.audioMode === "wired") await api("/api/sendspin/config", { audio_device: sel });
+          else if (!btInUse && !confirm("No Bluetooth speaker is selected yet. Continue anyway?")) return false;
+        }, state.audioMode === "wired" ? "Save & next" : "Next"));
     },
     // 4 connect
-    () => {
+    async () => {
+      const outLabel = await outputLabel();
       const stat = h("div", {}), pair = h("div", {}), logs = h("pre", {}, "…");
       const refresh = async () => {
         if (!stat.isConnected) return;
@@ -185,11 +205,13 @@ async function wizard(main) {
         } catch (e) { /* ignore transient */ }
         setTimeout(refresh, 4000);
       };
-      body.append(h("p", {}, "Start the player. It will appear automatically on your network (mDNS) – open your Sendspin server, e.g. Music Assistant, and look for “" + (s.sendspin.settings.name || s.system.hostname) + "” in its players list, then play something."),
-        h("div", {}, btn("Start player", async () => { await api("/api/sendspin/service", { action: "enable" }); refresh(); }),
-          btn("Restart", async () => { await api("/api/sendspin/service", { action: "restart" }); })),
+      let startErr = null;
+      try { await api("/api/sendspin/service", { action: "enable" }); } catch (e) { startErr = e.message; }
+      body.append(h("div", { class: "row" }, h("span", {}, "Sound output"), h("span", {}, outLabel)),
+        h("p", {}, "The player is starting. It appears on your network automatically: open your Sendspin server (for example Music Assistant) and look for “" + (s.sendspin.settings.name || s.system.hostname) + "” in its players list, then play something."),
+        startErr ? h("p", { class: "err" }, "Couldn't start the player: " + startErr) : null,
         stat, pair,
-        h("p", {}, "If the player doesn't show up, make sure the Pi and the server are on the same network/VLAN, then check the log below."), logs,
+        h("p", {}, "If the player doesn't show up, make sure the Pi and the server are on the same network, then check the log below."), logs,
         nav(null, "Finish"));
       setTimeout(refresh, 0);
     },
@@ -201,6 +223,57 @@ async function wizard(main) {
     }
   ];
   await steps[state.wiz]();
+}
+
+async function outputLabel() {
+  const st = await api("/api/status");
+  const dev = st.sendspin.settings.audio_device || "";
+  if (dev === "sendspin_bt" || dev.startsWith("bluealsa")) {
+    const b = await api("/api/bluetooth").catch(() => null);
+    const d = b && b.devices.find(x => x.mac === b.selected);
+    return "Bluetooth: " + (d ? d.name : (b && b.selected) || "speaker");
+  }
+  return dev || "System default";
+}
+
+// Bluetooth device list used by both the Bluetooth tab and the setup wizard.
+function btPanel(b, onChange) {
+  const wrap = h("div", {}), lists = h("div", {}), log = h("div", {});
+  const post = (path, mac, extra) => api("/api/bluetooth/" + path, Object.assign({ mac }, extra));
+  const device = d => {
+    const tag = d.in_use ? h("span", { class: "tag ok" }, "Sendspin output")
+      : d.connected ? h("span", { class: "tag ok" }, "connected")
+      : d.paired ? h("span", { class: "tag" }, "not connected") : null;
+    const acts = h("div", { class: "dev-actions" });
+    if (!d.paired) acts.append(btn("Pair", async () => {
+      log.textContent = ""; const r = await post("pair", d.mac);
+      log.append(jobView(r.job, () => setTimeout(onChange, 1200), "Paired and connected.", "Pairing failed. Put the speaker in pairing mode and try again."));
+    }));
+    else {
+      if (d.in_use) acts.append(btn("Stop using", async () => { await post("use", ""); onChange(); }, "sec"));
+      else if (d.connected) acts.append(btn("Use for Sendspin", async () => { await post("use", d.mac); onChange(); }));
+      if (d.connected) acts.append(btn("Disconnect", async () => { await post("disconnect", d.mac); onChange(); }, "sec"));
+      else acts.append(btn("Connect", async () => { await post("connect", d.mac); onChange(); }));
+      const forget = h("button", { class: "link bad" }, "Forget");
+      forget.addEventListener("click", async () => { if (confirm("Forget " + d.name + "?")) { await post("forget", d.mac); onChange(); } });
+      acts.append(forget);
+    }
+    return h("div", { class: "dev-row" },
+      h("div", { class: "dev-head" }, h("div", {}, h("b", {}, d.name), h("small", {}, d.mac)), tag), acts);
+  };
+  const paint = devs => {
+    lists.textContent = "";
+    const cur = devs.find(d => d.in_use);
+    if (cur) lists.append(h("div", { class: "flash" }, cur.name + " is set as your Sendspin output."));
+    const mine = devs.filter(d => d.paired), nearby = devs.filter(d => !d.paired);
+    if (mine.length) lists.append(h("div", { class: "group-title" }, "My speakers"), ...mine.map(device));
+    if (nearby.length && cur) lists.append(h("details", { class: "more" }, h("summary", {}, "Other nearby devices (" + nearby.length + ")"), ...nearby.map(device)));
+    else if (nearby.length) lists.append(h("div", { class: "group-title" }, "Nearby"), ...nearby.map(device));
+    if (!devs.length) lists.append(h("p", {}, "No speakers found yet. Put your speaker in pairing mode, then press Scan."));
+  };
+  paint(b.devices);
+  wrap.append(btn("Scan", async () => { lists.textContent = "Scanning for 8 seconds…"; const r = await api("/api/bluetooth/scan", {}); paint(r.devices); }, "sec"), log, lists);
+  return wrap;
 }
 
 function overlayPicker(a, onApplied) {
@@ -236,7 +309,8 @@ const views = {
     const out = h("div", {});
     const v = await api("/api/sendspin/versions").catch(() => ({}));
     const log = h("div", {});
-    const act = fn => async () => { log.textContent = ""; const r = await fn(); log.append(jobView(r.job, () => boot_keep())); };
+    const act = (fn, done) => async () => { log.textContent = ""; const r = await fn(); log.append(jobView(r.job, st => { if (st === "ok") { state.flash = done; boot_keep(); } }, done, "Failed. See the log above.")); };
+    if (state.flash) { main.append(h("div", { class: "flash" }, state.flash)); state.flash = null; }
     main.append(h("div", { class: "card" },
       h("div", { class: "row" }, "Installed version", h("span", { class: "tag " + (sp.installed ? "ok" : "bad") }, sp.installed ? "v" + sp.installed : "not installed")),
       h("div", { class: "row" }, "Latest on PyPI", h("span", {}, v.latest ? "v" + v.latest : "unknown (offline?)")),
@@ -244,8 +318,8 @@ const views = {
       h("div", { class: "row" }, "Player name", h("span", {}, sp.settings.name || "(hostname)")),
       h("div", { class: "row" }, "Audio device", h("span", {}, sp.settings.audio_device || "default")),
       h("div", { style: "margin-top:10px" },
-        !sp.installed ? btn("Install", act(() => api("/api/sendspin/install", {}))) :
-          btn(v.latest && v.latest !== sp.installed ? "Update to v" + v.latest : "Reinstall latest", act(() => api("/api/sendspin/upgrade", {}))),
+        !sp.installed ? btn("Install", act(() => api("/api/sendspin/install", {}), "Install complete. Sendspin is ready to use.")) :
+          btn(v.latest && v.latest !== sp.installed ? "Update to v" + v.latest : "Reinstall latest", act(() => api("/api/sendspin/upgrade", {}), "Update complete.")),
         btn("Start", () => svc("enable"), "sec"), btn("Stop", () => svc("stop"), "sec"), btn("Restart", () => svc("restart"), "sec")),
       log),
       h("div", { class: "card" }, h("h2", {}, "Logs"), out, btn("Refresh", () => loadLogs(out), "sec"),
@@ -270,39 +344,14 @@ const views = {
     const card = h("div", { class: "card" });
     main.append(card);
     if (!b.available) return card.append(h("p", { class: "err" }, b.error || "Bluetooth is not available."));
-    const list = h("div", {}), log = h("div", {});
-    const post = (path, mac, extra) => api("/api/bluetooth/" + path, Object.assign({ mac }, extra));
-    const paint = devs => {
-      list.textContent = "";
-      if (!devs.length) list.append(h("p", {}, "No speakers yet. Put your speaker in pairing mode, then press Scan."));
-      devs.forEach(d => {
-        const acts = h("div", { class: "actions" });
-        if (d.in_use) acts.append(h("span", { class: "tag ok" }, "Sendspin output"));
-        else if (d.connected) acts.append(h("span", { class: "tag ok" }, "connected"));
-        else if (d.paired) acts.append(h("span", { class: "tag" }, "paired"));
-        if (!d.paired) acts.append(btn("Pair & connect", async () => {
-          log.textContent = ""; const r = await post("pair", d.mac);
-          log.append(jobView(r.job, () => setTimeout(() => render(), 1200)));
-        }));
-        else if (!d.connected) acts.append(btn("Connect", async () => { await post("connect", d.mac); render(); }, "sec"));
-        else acts.append(btn("Disconnect", async () => { await post("disconnect", d.mac); render(); }, "sec"));
-        if (d.connected && !d.in_use) acts.append(btn("Use for Sendspin", async () => { await post("use", d.mac); render(); }));
-        if (d.in_use) acts.append(btn("Stop using", async () => { await post("use", ""); render(); }, "sec"));
-        if (d.paired) acts.append(btn("Forget", async () => { if (confirm("Forget " + d.name + "?")) { await post("forget", d.mac); render(); } }, "sec bad"));
-        list.append(h("div", { class: "row dev" }, h("div", {}, h("div", {}, d.name), h("div", { class: "mut" }, d.mac)), acts));
-      });
-    };
-    paint(b.devices);
-    card.append(h("p", {}, "Send Sendspin audio to a Bluetooth speaker or headphones. While one is selected, volume changes from your Sendspin server control the speaker's volume."),
-      list, (() => {
-        const cb = h("input", { type: "checkbox", checked: b.auto_reconnect });
-        cb.addEventListener("change", () => api("/api/bluetooth/auto", { enabled: cb.checked }).catch(e => { alert(e.message); cb.checked = !cb.checked; }));
-        return h("label", { class: "row pick" }, h("span", {}, cb, "Auto-reconnect the Sendspin speaker if it disconnects"), h("span", {}));
-      })(),
-      btn("Scan", async () => {
-        list.textContent = "Scanning…"; const r = await api("/api/bluetooth/scan", {}); paint(r.devices);
-      }, "sec"), log,
-      h("p", { class: "mut" }, "Tip: on the Pi Zero 2 W, Bluetooth and WiFi share an antenna. If audio stutters, move the Pi closer to the speaker, or use ethernet if you can."));
+    const auto = h("input", { type: "checkbox", class: "switch", role: "switch", "aria-label": "Reconnect automatically", checked: b.auto_reconnect });
+    auto.addEventListener("change", () => api("/api/bluetooth/auto", { enabled: auto.checked }).catch(e => { alert(e.message); auto.checked = !auto.checked; }));
+    card.append(
+      h("p", {}, "Play Sendspin through a Bluetooth speaker or headphones. Volume changes from your Sendspin server then control the speaker's volume."),
+      btPanel(b, () => render()),
+      h("div", { class: "divider" }, h("label", { class: "switch-row" },
+        h("span", {}, h("b", {}, "Reconnect automatically"), h("small", {}, "If the speaker disconnects, the Pi keeps trying to reconnect it.")), auto)),
+      h("p", { class: "note" }, "On a Pi Zero 2 W, Bluetooth and WiFi share one antenna. If audio stutters, move the Pi closer to the speaker or use ethernet."));
   },
   async wifi(main) {
     const w = await api("/api/wifi");

@@ -447,6 +447,10 @@ def main():
     if not cfg["password_hash"]:
         config.init()
     port = int(os.environ.get("SENDSPINPI_PORT", cfg["port"]))
+    try:
+        bluetooth.migrate()
+    except Exception:  # noqa: BLE001
+        pass
     threading.Thread(target=wifi.hotspot_loop, daemon=True).start()
     threading.Thread(target=bluetooth.watchdog_loop, daemon=True).start()
     threading.Thread(target=selfupdate.auto_loop, daemon=True).start()
