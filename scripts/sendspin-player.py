@@ -8,10 +8,12 @@ volume buttons, so the speaker and the Sendspin server always show the same leve
 If anything here fails, Sendspin starts the normal way.
 """
 import asyncio
+import json
 import logging
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 
@@ -20,6 +22,8 @@ FLAG = os.environ.get("SENDSPINPI_NATIVEFLAG", "/var/lib/sendspin/native-volume"
 BTCONF = os.environ.get("SENDSPINPI_BTCONF", "/etc/alsa/conf.d/99-sendspinpi-bluetooth.conf")
 VOLFILE = os.environ.get("SENDSPINPI_VOLFILE", "/var/lib/sendspin/last-volume")
 POLL_S = 1.5
+SETTINGS = os.environ.get("SENDSPINPI_SETTINGS", "/var/lib/sendspin/.config/sendspin/settings-daemon.json")
+FORMAT_MARKER = os.environ.get("SENDSPINPI_BTFORMAT", "/var/lib/sendspin/bt-format")
 
 
 def _pct(raw):
@@ -38,6 +42,77 @@ def _write_volfile(pct):
         os.replace(VOLFILE + ".tmp", VOLFILE)
     except OSError:
         pass
+
+
+def _speaker_mac():
+    try:
+        with open(BTCONF) as f:
+            m = re.search(r'device "([0-9A-Fa-f:]{17})"', f.read())
+        return m.group(1) if m else None
+    except OSError:
+        return None
+
+
+def _transport_rate():
+    """Sample rate of the Bluetooth link (44100 or 48000); 48000 if it cannot be read."""
+    ctl = shutil.which("bluealsactl") or shutil.which("bluealsa-cli")
+    mac = _speaker_mac()
+    if not ctl or not mac:
+        return 48000
+    try:
+        key = ("dev_" + mac.replace(":", "_") + "/a2dpsrc").lower()
+        out = subprocess.run([ctl, "list-pcms"], capture_output=True, text=True, timeout=8).stdout
+        pcm = next((l.split()[0] for l in out.splitlines() if key in l.lower()), None)
+        if pcm:
+            info = subprocess.run([ctl, "info", pcm], capture_output=True, text=True, timeout=8).stdout
+            m = re.search(r"^Sampling:\s*(\d+)", info, re.M)
+            if m and int(m.group(1)) in (44100, 48000):
+                return int(m.group(1))
+    except Exception:  # noqa: BLE001
+        pass
+    return 48000
+
+
+def manage_bt_audio_format():
+    """A Bluetooth (SBC) link carries 16-bit audio, so ask the server for 16-bit instead of the 24-bit
+    default: three times less data over Wi-Fi, which shares one antenna with Bluetooth on a Pi Zero 2 W,
+    and no conversion on the Pi. Runs before the player reads its settings.
+
+    Only touches a format that this function set itself (remembered in a marker file), so a format set
+    by hand is never overwritten, and the setting is removed again when the output is no longer Bluetooth."""
+    try:
+        with open(SETTINGS) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return
+    try:
+        with open(FORMAT_MARKER) as f:
+            managed = f.read().strip() or None
+    except OSError:
+        managed = None
+    changed = False
+    if data.get("audio_device") == "sendspin_bt":
+        current = data.get("audio_format")
+        # ours if unset, if we set it, or if it is exactly what we would choose (a value set by hand while testing)
+        if current is None or current == managed or re.fullmatch(r"flac:(44100|48000):16:2", current):
+            want = "flac:%d:16:2" % _transport_rate()
+            if current != want:
+                data["audio_format"] = want
+                changed = True
+            with open(FORMAT_MARKER, "w") as f:
+                f.write(want + "\n")
+    elif managed and data.get("audio_format") == managed:
+        del data["audio_format"]
+        changed = True
+        try:
+            os.remove(FORMAT_MARKER)
+        except OSError:
+            pass
+    if changed:
+        with open(SETTINGS + ".tmp", "w") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+        os.replace(SETTINGS + ".tmp", SETTINGS)
 
 
 class BluetoothVolumeController:
@@ -183,6 +258,10 @@ class BluetoothVolumeController:
 
 
 def main():
+    try:
+        manage_bt_audio_format()
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("sendspinpi").warning("Could not adjust the audio format (%s)", exc)
     import sendspin.cli as cli   # the same module the normal `sendspin` command runs
     if os.path.exists(FLAG):
         try:

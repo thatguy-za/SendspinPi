@@ -14,10 +14,11 @@ def factory_reset(forget_wifi=False):
     # 1. stop the player and keep it from starting until setup enables it again
     sendspin_ctl.service_action("disable")
     # 2. the player's own settings (name, audio output, volume, hook)
-    try:
-        os.remove(sendspin_ctl.SETTINGS)
-    except OSError:
-        pass
+    for path in (sendspin_ctl.SETTINGS, sendspin_ctl.BT_FORMAT_MARKER):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
     # 3. Bluetooth speakers and our device definition
     bluetooth.forget_all()
     try:

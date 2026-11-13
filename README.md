@@ -84,6 +84,10 @@ In **System → Automatic updates**, switch on "Install updates automatically" a
 
 **System → SendspinPi updates** shows the installed version and whether a newer release exists. **Update now** installs it (the page restarts for about a minute and your settings are kept). Switch on "Update SendspinPi automatically" to check every few hours and install new releases without you doing anything. It's off by default, and it only installs tagged [GitHub releases](https://github.com/thatguy-za/SendspinPi/releases), never unreleased code.
 
+### Bluetooth audio format
+
+A Bluetooth speaker link (SBC) carries 16-bit audio. When a Bluetooth speaker is the output, the player therefore asks Music Assistant for 16-bit audio at the speaker's sample rate instead of the 24-bit default. That is a third of the data over Wi-Fi, which matters on a Pi Zero 2 W where Wi-Fi and Bluetooth share one antenna. It is applied each time the player starts and removed again when you switch to another output. A format you set yourself in the player's settings is never overwritten.
+
 ### Two-way volume (beta)
 
 By default the Pi scales the volume itself, so the speaker's own volume buttons don't affect what Sendspin shows. On the **Audio output** page, with a Bluetooth speaker selected, switch on **Two-way volume (beta)** and the speaker's own volume is used instead: its buttons move the slider in Music Assistant, and the slider moves the speaker. The speaker must support Bluetooth absolute volume (many do). The player restarts when you switch it. It relies on Sendspin's internals, so if a Sendspin update ever changes them, the player quietly falls back to normal volume control.

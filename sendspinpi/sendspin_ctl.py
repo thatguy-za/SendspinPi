@@ -138,6 +138,7 @@ def read_settings():
 
 
 VOLFILE = os.path.join(SENDSPIN_HOME, "last-volume")
+BT_FORMAT_MARKER = os.path.join(SENDSPIN_HOME, "bt-format")   # written by hooks/sendspin-player.py
 
 
 def last_volume():
