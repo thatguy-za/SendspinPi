@@ -81,7 +81,7 @@ function lazyCard(title, load, build, optional) {
 const state = { me: null, status: null, tab: "home", wiz: 0, kind: null, timer: null, menu: false };
 // [id, path, label]. Every page has its own URL (History API); the server serves the app for each path.
 const ROUTES = [["home", "/", "Home"], ["wizard", "/setup", "Setup"], ["sendspin", "/sendspin", "Sendspin"],
-  ["audio", "/audio", "Audio output"], ["wifi", "/wifi", "WiFi"], ["system", "/system", "System"],
+  ["audio", "/audio", "Audio output"], ["wifi", "/wifi", "Wi-Fi"], ["system", "/system", "System"],
   ["account", "/account", "Account"]];
 const route = id => ROUTES.find(r => r[0] === id);
 function idForPath(p) {
@@ -99,9 +99,9 @@ function go(id, replace) {
 }
 window.addEventListener("popstate", () => { state.tab = idForPath(location.pathname); state.menu = false; render(); });
 
-async function boot() {
+async function boot(status) {
   try {
-    state.status = await api("/api/status");
+    state.status = status || await api("/api/status");
     state.me = state.status.username;
     state.tab = idForPath(location.pathname);
     const done = state.status.setup_complete;
@@ -158,13 +158,16 @@ function loginView() {
   const u = h("input", { placeholder: "Username", autocomplete: "username", value: "admin" });
   const p = h("input", { type: "password", placeholder: "Password", autocomplete: "current-password" });
   const msg = h("div", { class: "err" });
+  const b = h("button", { class: "b", onclick: () => go() }, "Log in");
   const go = async () => {
-    try { await api("/api/login", { username: u.value, password: p.value }); await boot(); }
-    catch (e) { msg.textContent = e.message; }
+    if (b.disabled) return;
+    b.disabled = true; b.textContent = ""; b.append(h("span", { class: "spinner sm" }), "Signing in…"); msg.textContent = "";
+    try { const r = await api("/api/login", { username: u.value, password: p.value }); await boot(r.status); }
+    catch (e) { msg.textContent = e.message; b.disabled = false; b.textContent = "Log in"; }
   };
   p.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
   return h("div", { class: "login card" }, h("h2", {}, "SendspinPi"), h("p", {}, "Sign in to manage this player."),
-    h("label", {}, "Username"), u, h("label", {}, "Password"), p, h("button", { class: "b", onclick: go }, "Log in"), msg);
+    h("label", {}, "Username"), u, h("label", {}, "Password"), p, b, msg);
 }
 
 // ---------- Wizard
@@ -187,13 +190,17 @@ async function wizard(main) {
     },
     // 2 install
     async () => {
-      const v = await api("/api/sendspin/versions");
+      const v = await api("/api/sendspin/versions?latest=0");   // the PyPI lookup can be slow: fill it in afterwards
       const log = h("div", {});
       const next = h("div", {});
       const ready = () => { next.textContent = ""; next.append(nav(null)); };
+      const latestSlot = h("span", {});
       body.append(h("p", {}, "Sendspin is installed from PyPI into its own isolated environment. On a Pi Zero 2 W this can take several minutes – please keep this page open."),
-        h("p", {}, v.installed ? ["Installed: ", h("span", { class: "tag ok" }, "v" + v.installed), v.latest && v.latest !== v.installed ? [" – latest is v" + v.latest + " (you can update later in the Sendspin tab)"] : ""] :
-          ["Not installed yet", v.latest ? " (latest: v" + v.latest + ")" : ""]), log, next);
+        h("p", {}, v.installed ? ["Installed: ", h("span", { class: "tag ok" }, "v" + v.installed)] : "Not installed yet", latestSlot), log, next);
+      api("/api/sendspin/versions").then(f => {
+        if (!f.latest) return;
+        latestSlot.append(v.installed ? (f.latest !== v.installed ? " – latest is v" + f.latest + " (you can update later in the Sendspin tab)" : "") : " (latest: v" + f.latest + ")");
+      }).catch(() => {});
       if (v.installed) ready();
       else log.append(btn("Install Sendspin", async b => {
         const r = await api("/api/sendspin/install", {});
@@ -217,12 +224,13 @@ async function wizard(main) {
       const stat = h("div", {}), pair = h("div", {}), logs = h("pre", {}, "…");
       const refresh = async () => {
         if (!stat.isConnected) return;
+        if (document.hidden) return setTimeout(refresh, 4000);   // pause while the tab is in the background
         try {
-          const info = (await api("/api/status")).sendspin.service;
+          const info = (await api("/api/sendspin/state")).service;
           stat.textContent = "";
           stat.append("Player service: ", h("span", { class: "tag " + (info.active === "active" ? "ok" : "warn") }, info.active));
           const l = await api("/api/sendspin/logs?n=40");
-          logs.textContent = l.logs || "(no logs yet)";
+          logs.textContent = l.logs || "No logs yet.";
           pair.textContent = "";
           if (l.pairing) pair.append(h("p", {}, "The server asked for a pairing code. Enter the code from this line on your Sendspin server:"), h("div", { class: "code" }, l.pairing));
         } catch (e) { /* ignore transient */ }
@@ -241,7 +249,7 @@ async function wizard(main) {
     // 5 done
     () => {
       api("/api/setup/complete", { complete: true });
-      body.append(h("p", {}, "All set. Home shows how everything is doing, and the other pages let you change the audio output, WiFi and updates. To run this guide again, use Reset on the System page."),
+      body.append(h("p", {}, "All set. Home shows how everything is doing, and the other pages let you change the audio output, Wi-Fi and updates. To run this guide again, use Reset on the System page."),
         btn("Go to Home", async () => { state.wiz = 0; state.status = await api("/api/status"); go("home"); }));
     }
   ];
@@ -351,7 +359,7 @@ async function audioOutputPanel(host, opts) {
       const more = h("details", { class: "more" }, h("summary", {}, "Advanced"),
         h("label", {}, "Custom device (index, name prefix or ALSA name)"), custom,
         h("label", {}, "Devices as Sendspin sees them"), raw);
-      more.addEventListener("toggle", () => { if (more.open && !loaded) { loaded = true; api("/api/audio/devices").then(r => { raw.textContent = r.text || "(none)"; }).catch(e => { raw.textContent = e.message; }); } });
+      more.addEventListener("toggle", () => { if (more.open && !loaded) { loaded = true; api("/api/audio/devices").then(r => { raw.textContent = r.text || "Nothing found."; }).catch(e => { raw.textContent = e.message; }); } });
       panel.append(more);
     }
   } else if (kind === "i2s") {
@@ -376,7 +384,7 @@ async function audioOutputPanel(host, opts) {
         h("label", { class: "switch-row" },
           h("span", {}, h("b", {}, "Two-way volume (beta)"), h("small", {}, "Use the speaker's own volume. Its buttons move the Sendspin slider, and the slider moves the speaker. The player restarts when you change this.")), two)),
       h("details", { class: "more" }, h("summary", {}, "Audio stuttering?"),
-        h("p", { class: "note" }, "On a Pi Zero 2 W, Bluetooth and WiFi share one antenna. Move the Pi closer to the speaker, or use ethernet.")));
+        h("p", { class: "note" }, "On a Pi Zero 2 W, Bluetooth and Wi-Fi share one antenna. Move the Pi closer to the speaker, or use ethernet.")));
   }
 }
 
@@ -387,7 +395,7 @@ function overlayPicker(a, onApplied) {
     btn("Apply overlay", async () => {
       if (!(await ask("Apply this DAC overlay? The Pi needs a restart afterwards.", { yes: "Apply" }))) return;
       await api("/api/audio/overlay", { overlay: sel.value });
-      if (await ask("Saved. Restart now to activate it?", { yes: "Restart now" })) { await api("/api/power", { action: "reboot" }); tell("Rebooting… reload this page in a minute."); }
+      if (await ask("Saved. Restart now to activate it?", { yes: "Restart now" })) { await api("/api/power", { action: "reboot" }); restartScreen("reboot"); }
       else onApplied();
     }, "sec"));
 }
@@ -421,38 +429,52 @@ const views = {
       return h("div", { class: "card kv" }, h("div", { class: "section-head" }, h("h2", {}, title), t), ...rows);
     };
     const paint = d => {
-      const w = d.wifi, p = d.player, sys = d.system, o = d.output, bt = d.bluetooth, v = d.volume;
+      const w = d.wifi, p = d.player, sys = d.system, o = d.output, bt = d.bluetooth, v = d.volume, pb = p.playback || {};
       const svc = p.service.active;
-      const player = !p.installed ? ["Not installed", "bad"] : svc === "active" ? ["Running", "ok"] : svc === "activating" ? ["Starting", "warn"] : ["Stopped", "bad"];
+      // what the player is doing right now: a headline, a dot colour, a line of detail and (if it needs attention) an issue
+      let ps;
+      if (!p.installed) ps = { title: "Not installed", dot: "bad", sub: "Sendspin isn't installed yet. Open the Sendspin page to set it up.", issue: "The player is not installed" };
+      else if (svc === "activating") ps = { title: "Starting…", dot: "warn", sub: "The player is starting up.", issue: null };
+      else if (svc !== "active") ps = { title: "Stopped", dot: "bad", sub: "The player service isn't running.", issue: "The player is stopped" };
+      else if (!pb.connected) ps = { title: "Waiting for a server", dot: "warn", sub: "Add this player (" + p.name + ") in your Sendspin server.", issue: "The player isn't connected to a server" };
+      else if (pb.state === "playing") ps = { title: "Playing", dot: "ok pulse", sub: pb.server ? "From " + pb.server : "Audio is streaming" };
+      else ps = { title: "Connected", dot: "ok", sub: (pb.state === "idle" ? "Nothing playing" : "Ready") + (pb.server ? " · " + pb.server : "") };
       let net;
       if (w.connected) net = [w.ssid, "ok", [w.ip, w.signal != null ? w.signal + "%" : null].filter(Boolean).join(" · ")];
       else if (w.hotspot) net = ["Setup hotspot", "warn", "Join it and open 10.42.0.1"];
       else if (w.ethernet) net = ["Ethernet", "ok", w.ethernet.ip];
-      else net = [w.available ? "Not connected" : "No WiFi", "bad", ""];
+      else net = [w.available ? "Not connected" : "No Wi-Fi", "bad", ""];
       const temp = sys.cpu_temp_c, tdot = temp == null ? null : temp >= 80 ? "bad" : temp >= 70 ? "warn" : "ok";
       const pct = v.level == null ? null : Math.max(0, Math.min(100, v.level));
       const volume = v.muted ? "Muted" : pct == null ? "Not set yet" : pct + "%";
 
-      // one line that says whether anything needs attention
+      // the banner only appears when something needs attention
       const issues = [];
-      if (player[1] !== "ok") issues.push("The player is " + player[0].toLowerCase());
+      if (ps.issue) issues.push(ps.issue);
       if (!w.connected && !w.ethernet) issues.push(w.hotspot ? "Running as a setup hotspot" : "Not connected to a network");
       if (bt && !bt.connected) issues.push("The Bluetooth speaker is not connected");
       if (tdot === "bad") issues.push("The CPU is very hot");
-      banner.className = "summary " + (issues.length ? "warn" : "ok");
+      banner.className = "summary warn";
+      banner.hidden = !issues.length;
       banner.textContent = "";
-      banner.append(h("i", { class: "dot " + (issues.length ? "warn" : "ok") }),
-        h("span", {}, issues.length ? issues.join(" · ") : "Everything is running"));
+      if (issues.length) banner.append(h("i", { class: "dot warn" }), h("span", {}, issues.join(" · ")));
 
-      groups.textContent = "";
-      groups.append(
-        group("Player", "sendspin", [
-          item("Status", player[0], player[1]),
-          item("Name", p.name, null, p.installed ? "Sendspin v" + p.installed : null),
+      const manage = id => { const t = h("a", { class: "group-link", href: route(id)[1] }, "Manage"); t.addEventListener("click", e => { e.preventDefault(); go(id); }); return t; };
+      const hero = h("div", { class: "card hero" },
+        h("div", { class: "hero-top" }, h("i", { class: "dot big " + ps.dot }),
+          h("div", { class: "hero-text" }, h("h2", {}, ps.title), h("p", { class: "mut" }, ps.sub)), manage("sendspin")),
+        h("div", { class: "kv" },
+          item("Player", p.name, null, p.installed ? "Sendspin v" + p.installed : null),
           item("Audio output", { system: "System output", i2s: "I²S DAC", bluetooth: "Bluetooth" }[o.type] + " · " + o.label),
           item("Volume", volume),
-          pct == null || v.muted ? null : h("div", { class: "meter" }, h("i", { style: "width:" + pct + "%" }))
-        ].filter(Boolean)),
+          pct == null || v.muted ? null : h("div", { class: "meter" }, h("i", { style: "width:" + pct + "%" }))),
+        p.installed ? h("div", { class: "hero-actions" }, btn(svc === "active" ? "Restart player" : "Start player", async () => {
+          if (svc === "active" && !(await ask("Restart the player? Any audio that is playing will stop for a moment.", { yes: "Restart" }))) return;
+          await api("/api/sendspin/service", { action: svc === "active" ? "restart" : "start" });
+          paint(await api("/api/home"));
+        }, "sec")) : null);
+      groups.textContent = "";
+      groups.append(hero, h("div", { class: "grid2" },
         group("Connections", "wifi", [
           item("Network", net[0], net[1], net[2]),
           item("Bluetooth speaker", bt ? bt.name : "None selected", bt ? (bt.connected ? "ok" : "warn") : null, bt ? (bt.connected ? "Connected" : "Not connected") : null)
@@ -461,18 +483,28 @@ const views = {
           item("CPU temperature", temp == null ? "—" : temp + " °C", tdot),
           item("Uptime", uptime(sys.uptime_s)),
           item("Memory", sys.mem_avail_kb ? bytes(sys.mem_avail_kb * 1024) + " free" : "—", null, sys.mem_total_kb ? "of " + bytes(sys.mem_total_kb * 1024) : null)
-        ]));
+        ])));
     };
+    // updates are slow to look up: they get their own card when they arrive
+    const updatesBox = h("div", {}), ups = [];
+    const addUpdate = (text, id) => {
+      ups.push([text, id]);
+      updatesBox.textContent = "";
+      updatesBox.append(h("div", { class: "card kv" }, h("div", { class: "section-head" }, h("h2", {}, "Updates")),
+        ...ups.map(([t, i]) => { const a = h("a", { class: "group-link", href: route(i)[1] }, "View"); a.addEventListener("click", e => { e.preventDefault(); go(i); }); return h("div", { class: "row" }, h("span", {}, t), a); })));
+    };
+    main.append(updatesBox);
     const d0 = await api("/api/home");
     paint(d0);
     if (d0.system.reboot_required) chip("Restart needed to finish updates", "system");
     state.timer = setInterval(async () => {
       if (!groups.isConnected) return clearInterval(state.timer);
+      if (document.hidden) return;   // don't poll the Pi from a background tab
       try { paint(await api("/api/home")); } catch (e) { /* the Pi may be restarting */ }
     }, 10000);
     // updates are slow to look up: show them as chips when they arrive
-    api("/api/system/upgradable").then(u => { const n = u.packages.length; if (n) chip(n + " system update" + (n > 1 ? "s" : "") + " available", "system"); }).catch(() => {});
-    api("/api/selfupdate").then(u => { if (u.available) chip("SendspinPi " + u.latest + " available", "system"); }).catch(() => {});
+    api("/api/system/upgradable").then(u => { const n = u.packages.length; if (n) addUpdate(n + " system update" + (n > 1 ? "s" : "") + " available", "system"); }).catch(() => {});
+    api("/api/selfupdate").then(u => { if (u.available) addUpdate("SendspinPi " + u.latest + " available", "system"); }).catch(() => {});
   },
   wizard,
   async sendspin(main) {
@@ -481,7 +513,7 @@ const views = {
     const log = h("div", {});
     const act = (fn, done) => async () => { log.textContent = ""; const r = await fn(); log.append(jobView(r.job, st => { if (st === "ok") { state.flash = done; boot_keep(); } }, done, "Failed. See the log above.")); };
     if (state.flash) { main.append(h("div", { class: "flash" }, state.flash)); state.flash = null; }
-    const latest = h("span", {}, "checking…");
+    const latest = h("span", {}, "Checking…");
     const upBtn = !sp.installed ? btn("Install", act(() => api("/api/sendspin/install", {}), "Install complete. Sendspin is ready to use."))
       : btn("Update", act(() => api("/api/sendspin/upgrade", {}), "Update complete."));
     // the PyPI lookup is slow; fill it in when it arrives
@@ -513,7 +545,7 @@ const views = {
     main.append(now);
     const w = await api("/api/wifi");
     now.textContent = "";
-    if (!w.available) return now.append(h("p", { class: "err" }, "No WiFi interface found (NetworkManager required)."));
+    if (!w.available) return now.append(h("p", { class: "err" }, "No Wi-Fi interface found (NetworkManager required)."));
     const wifiConn = w.connections.find(c => c.type !== "802-3-ethernet");
     const eth = w.connections.find(c => c.type === "802-3-ethernet");
     const connected = !!w.current_ssid;
@@ -523,7 +555,7 @@ const views = {
     now.append(
       h("div", { class: "eyebrow" }, w.hotspot ? "Setup hotspot" : connected ? "Connected to" : "Not connected"),
       h("div", { class: "net-name" }, h("i", { class: "dot " + (connected ? "ok" : w.hotspot ? "warn" : "bad") }),
-        h("span", {}, w.hotspot ? w.hotspot_ssid : connected ? w.current_ssid : "No WiFi network")),
+        h("span", {}, w.hotspot ? w.hotspot_ssid : connected ? w.current_ssid : "No Wi-Fi network")),
       meta,
       eth ? h("div", { class: "net-meta" }, "Also on ethernet" + (eth.ip ? " · " + eth.ip : "")) : null,
       notice);
@@ -543,7 +575,7 @@ const views = {
         if (!ssid) return tell("Enter the network name");
         await api("/api/wifi/connect", { ssid, password: pw ? pw.value : "", hidden: !n });
         closeForm();
-        if (w.hotspot) tell("Connecting… this hotspot will drop. Rejoin your normal WiFi and open http://" + state.status.system.hostname + ".local. If it fails, the hotspot comes back in about a minute.");
+        if (w.hotspot) tell("Connecting… this hotspot will drop. Rejoin your normal Wi-Fi and open http://" + state.status.system.hostname + ".local. If it fails, the hotspot comes back in about a minute.");
         else { notice.textContent = ""; notice.append(h("div", { class: "flash" }, "Connecting to " + ssid + "…")); setTimeout(() => render(), 6000); }
       };
       // Connect is only the main action when there is no connection yet
@@ -586,8 +618,10 @@ const views = {
   async system(main) {
     // start every request now, in parallel; only the quick one blocks the page
     const upP = api("/api/system/upgradable"), auP = api("/api/updates"), suP = api("/api/selfupdate");
-    const sys = (await api("/api/status")).system;
     const log = h("div", {});
+    api("/api/status").then(s => {   // the restart notice fills in when ready, so the page isn't held up
+      if (s.system.reboot_required) main.querySelector("h1").after(h("div", { class: "callout" }, "A restart is needed to finish updates. Use Restart in the Power section below when you're ready."));
+    }).catch(() => {});
     // System updates card: buttons are there at once, the package status and automatic-update section fill in later
     const statusSlot = h("div", {}, h("p", { class: "mut" }, "Checking for updates…"));
     const updateNow = btn("Update now", async () => {
@@ -605,7 +639,6 @@ const views = {
     }).catch(e => { statusSlot.textContent = e.message; });
     const autoSlot = h("div", { class: "divider" }, h("p", { class: "mut" }, "Loading automatic updates…"));
     auP.then(au => { autoSlot.textContent = ""; autoSlot.append(autoUpdatesSection(au)); }).catch(() => autoSlot.remove());
-    if (sys.reboot_required) main.append(h("div", { class: "callout" }, "A restart is needed to finish updates. Use Restart in the Power section below when you're ready."));
     main.append(
       lazyCard("SendspinPi updates", () => suP, selfUpdateCard, true),
       h("div", { class: "card" }, h("h2", {}, "System updates"), statusSlot,
@@ -615,8 +648,8 @@ const views = {
         log, autoSlot),
       h("div", { class: "card" }, h("h2", {}, "Power"),
         h("p", {}, "Shutting down needs physical access to power the Pi back on."),
-        btn("Restart", async () => { if (await ask("Restart the Pi now?", { yes: "Restart" })) { await api("/api/power", { action: "reboot" }); tell("Restarting… reload in about a minute."); } }, "sec"),
-        btn("Shut down", async () => { if (await ask("Shut down the Pi? You will need to unplug and replug power to start it again.", { yes: "Shut down", danger: true })) { await api("/api/power", { action: "shutdown" }); tell("Shutting down."); } }, "sec bad")),
+        btn("Restart", async () => { if (await ask("Restart the Pi now?", { yes: "Restart" })) { await api("/api/power", { action: "reboot" }); restartScreen("reboot"); } }, "sec"),
+        btn("Shut down", async () => { if (await ask("Shut down the Pi? You will need to unplug and replug power to start it again.", { yes: "Shut down", danger: true })) { await api("/api/power", { action: "shutdown" }); restartScreen("shutdown"); } }, "sec bad")),
       h("div", { class: "card" }, h("h2", {}, "Reset"),
         h("p", {}, "Erase this player's settings and run setup again from the start."),
         btn("Reset everything…", resetDialog, "sec bad")));
@@ -634,7 +667,7 @@ function autoUpdatesSection(u) {
   const sec = h("div", {});
   if (!u.installed) return (sec.append(h("p", { class: "err" }, "Automatic updates aren't installed. Re-run the installer to add them.")), sec);
   const opts = h("div", { class: "suboptions" }), log = h("div", {});
-  const details = h("pre", { hidden: true }, u.last.tail || "No log yet.");
+  const details = h("pre", { hidden: true }, u.last.tail || "No logs yet.");
   const msg = h("small", { class: "okmsg" });
   const sub = h("small", {}, "Checks daily and installs in the background");
   const save = async patch => {
@@ -710,8 +743,46 @@ function selfUpdateCard(u) {
   return card;
 }
 
-async function loadLogs(el) { try { el.textContent = ""; el.append(h("pre", {}, (await api("/api/sendspin/logs")).logs || "(empty)")); } catch (e) { el.textContent = e.message; } }
+async function loadLogs(el) { try { el.textContent = ""; el.append(h("pre", {}, (await api("/api/sendspin/logs")).logs || "No logs yet.")); } catch (e) { el.textContent = e.message; } }
 async function boot_keep() { state.status = await api("/api/status"); render(); }
+
+// Full-screen restart / shutdown screen. For a restart it waits until the Pi has gone down and come back,
+// then reloads the page (you will need to log in again).
+function restartScreen(kind) {
+  clearInterval(state.timer);
+  const shutdown = kind === "shutdown";
+  const text = h("p", { class: "mut" }, shutdown ? "The Pi is powering off. It's safe to unplug it in about 20 seconds."
+    : "This usually takes about a minute. This page reloads by itself when the Pi is back.");
+  const spinner = h("div", { class: "spinner" });
+  const overlay = h("div", { class: "overlay", role: "alert" }, spinner,
+    h("h2", {}, shutdown ? "Shutting down" : "Restarting the Pi"), text);
+  document.body.append(overlay);
+  if (shutdown) {
+    setTimeout(() => { spinner.remove(); overlay.querySelector("h2").textContent = "The Pi is off"; text.textContent = "Unplug the power, then plug it back in to start it again."; }, 25000);
+    return;
+  }
+  const started = Date.now();
+  let wentDown = false;
+  const tick = async () => {
+    let up = false;
+    try {
+      const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 3000);
+      const r = await fetch("/api/ping", { cache: "no-store", signal: ctl.signal });
+      clearTimeout(t); up = r.ok;
+    } catch (e) { up = false; }
+    if (!up) wentDown = true;
+    else if (wentDown) return location.reload();   // it went away and is back: show the fresh page
+    const waited = Date.now() - started;
+    if (!wentDown && waited > 90000) {              // never saw it go down: the restart probably didn't start
+      spinner.remove(); overlay.querySelector("h2").textContent = "The Pi doesn't seem to have restarted";
+      text.textContent = ""; overlay.append(btn("Reload page", () => location.reload()));
+      return;
+    }
+    if (wentDown && waited > 150000) text.textContent = "Still waiting. Check that the Pi has power. This page keeps trying.";
+    setTimeout(tick, 2000);
+  };
+  setTimeout(tick, 4000);
+}
 
 // In-app dialogs (native <dialog>) instead of the browser's own popups
 function modal(build, onClose) {
@@ -747,7 +818,7 @@ function resetDialog() {
     h("h2", {}, "Reset everything?"),
     h("p", {}, "This returns the player to a fresh start and opens the setup guide again. It erases:"),
     h("ul", { class: "plain" }, ["The player's name, audio output and volume", "All Bluetooth speakers and their pairings", "The I²S DAC setting", "Automatic update settings"].map(t => h("li", {}, t))),
-    h("label", { class: "opt" }, wifiBox, h("span", {}, h("b", {}, "Also forget saved WiFi networks"), h("small", {}, "The Pi leaves your network and starts its setup hotspot."))),
+    h("label", { class: "opt" }, wifiBox, h("span", {}, h("b", {}, "Also forget saved Wi-Fi networks"), h("small", {}, "The Pi leaves your network and starts its setup hotspot."))),
     h("p", { class: "mut" }, "Your login and the installed Sendspin version are kept."),
     h("div", { class: "dlg-actions" }, btn("Cancel", () => close(), "sec"),
       btn("Reset everything", async () => {
@@ -755,7 +826,7 @@ function resetDialog() {
         close();
         state.status = await api("/api/status");
         state.wiz = 0; state.kind = null;
-        if (r.forgot_wifi) tell("Reset done. The Pi is leaving your WiFi and will start the SendspinPi-Setup hotspot. Join it and open http://10.42.0.1/ to set it up again.");
+        if (r.forgot_wifi) tell("Reset done. The Pi is leaving your Wi-Fi and will start the SendspinPi-Setup hotspot. Join it and open http://10.42.0.1/ to set it up again.");
         else if (r.reboot_recommended) tell("Reset done. Restart the Pi (System page, Power section) so the DAC setting is removed.");
         go("wizard");
       }, "bad"))));

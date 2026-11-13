@@ -115,14 +115,14 @@ def test_tone_steps(device):
     return steps
 
 
-def output_summary():
+def output_summary(bt_info=None):
     """Active output as {type, label, device}: type is system, i2s or bluetooth."""
     from . import config
     dev = sendspin_ctl.read_settings().get("audio_device", "")
     if dev == "sendspin_bt" or dev.startswith("bluealsa"):
         from . import bluetooth
         mac = bluetooth.selected_mac()
-        d = bluetooth.info(mac) if mac else None
+        d = bt_info if bt_info is not None else (bluetooth.info(mac) if mac else None)   # reuse the caller's lookup
         return {"type": "bluetooth", "label": d["name"] if d else "Bluetooth speaker", "device": dev}
     label = "System default"
     if dev:

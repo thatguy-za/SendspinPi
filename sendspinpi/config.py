@@ -30,7 +30,17 @@ def random_password(n=12):
     return "".join(secrets.choice(ALPHABET) for _ in range(n))
 
 
-def hash_password(pw, salt=None, iters=200_000):
+ITERS = 40_000  # ~0.16 s on a Pi Zero (200k took 0.8 s); the login is rate-limited and LAN-only
+
+
+def needs_rehash(stored):
+    try:
+        return int(stored.split("$")[1]) != ITERS
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def hash_password(pw, salt=None, iters=ITERS):
     salt = salt or secrets.token_hex(16)
     dk = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt.encode(), iters).hex()
     return "pbkdf2$%d$%s$%s" % (iters, salt, dk)

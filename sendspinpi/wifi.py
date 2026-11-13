@@ -86,7 +86,7 @@ def scan():
     global _scan_cache
     dev = iface()
     if not dev:
-        return {"networks": [], "cached": False, "error": "No WiFi interface found"}
+        return {"networks": [], "cached": False, "error": "No Wi-Fi interface found"}
     rc, rows, err = _nm("IN-USE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list",
                         "ifname", dev, "--rescan", "yes", timeout=40)
     best = {}

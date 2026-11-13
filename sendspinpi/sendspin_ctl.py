@@ -88,6 +88,47 @@ def pairing_line(text):
     return None
 
 
+PLAYBACK = os.path.join(SENDSPIN_HOME, "playback.json")   # written by hooks/state-hook.sh
+
+
+def parse_connection(text):
+    """Server the player is connected to (name, or "" if connected without a name), or None. Reads the daemon's log."""
+    server = None
+    for line in text.splitlines():
+        m = re.search(r"(?:Admitted|Switching to) server '([^']*)'", line)
+        if m:
+            server = m.group(1)
+        elif re.search(r"Server connected|Connected to ", line):
+            server = "" if server is None else server
+        elif re.search(r"Server '[^']*' disconnected|Disconnected from server|Daemon stopped|Starting Sendspin daemon", line):
+            server = None
+    return server
+
+
+def _playback():
+    rc, out, _ = run(["journalctl", "-u", SERVICE, "-n", "200", "--no-pager", "-o", "cat"])
+    server = parse_connection(out) if rc == 0 else None
+    state = None
+    try:
+        with open(PLAYBACK) as f:
+            pb = json.load(f)
+        state = pb.get("state")
+        if state == "playing" and server is None and pb.get("server"):
+            server = pb["server"]
+    except (OSError, ValueError):
+        pass
+    if state not in ("playing", "idle"):
+        state = None   # no hook data (older service file, or the player has not played since it started)
+    return {"connected": server is not None, "server": server or None, "state": state}
+
+
+def playback(svc=None):
+    """Live player status: {connected, server, state: playing|idle|None}. Cheap enough to poll."""
+    if (svc or service_state())["active"] != "active":
+        return {"connected": False, "server": None, "state": None}
+    return cached("sendspin_playback", 4, _playback)
+
+
 def read_settings():
     try:
         with open(SETTINGS) as f:

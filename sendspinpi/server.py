@@ -1,4 +1,6 @@
 """Tiny stdlib HTTP server: static UI + JSON API."""
+import gzip
+import hashlib
 import json
 import os
 import secrets
@@ -19,6 +21,7 @@ SESSION_TTL = 12 * 3600
 _sessions = {}          # token -> expiry
 _fails = {}             # ip -> [count, first_ts]
 _slock = threading.Lock()
+_static_cache = {}      # file name -> (mtime, raw, gzipped, etag)
 ROUTES = {}
 
 
@@ -53,12 +56,14 @@ def login(h, q, body):
             _fails[ip] = [cnt + 1, first]
         time.sleep(1)
         raise ApiError("Wrong username or password", 401)
+    if config.needs_rehash(cfg["password_hash"]):   # move old hashes to the faster setting
+        config.update(password_hash=config.hash_password(str(body.get("password", ""))))
     with _slock:
         _fails.pop(ip, None)
-        tok = secrets.token_urlsafe(32)
+        tok =secrets.token_urlsafe(32)
         _sessions[tok] = time.time() + SESSION_TTL
     h.set_cookie = "session=%s; HttpOnly; SameSite=Strict; Path=/; Max-Age=%d" % (tok, SESSION_TTL)
-    return {"ok": True}
+    return {"ok": True, "status": status(h, q, body)}   # saves the page a second round trip
 
 
 @route("POST", "/api/logout", auth=False)
@@ -107,12 +112,13 @@ def status(h, q, body):
 def home(h, q, body):
     sysi = system.info()
     sp = sendspin_ctl.read_settings()
+    svc = sendspin_ctl.service_state()
     mac = bluetooth.selected_mac()
-    bt = None
+    bt = d = None
     if mac:
         d = bluetooth.info(mac)
         bt = {"mac": mac, "name": d["name"] if d else mac, "connected": bool(d and d["connected"])}
-    output = audio.output_summary()
+    output = audio.output_summary(d)
     volume = {"level": sp.get("player_volume"), "muted": bool(sp.get("player_muted"))}
     if output["type"] == "bluetooth":
         fresh = sendspin_ctl.last_volume()   # Sendspin's own settings file lags by about a minute
@@ -124,7 +130,7 @@ def home(h, q, body):
                    "reboot_required": sysi["reboot_required"], "ips": sysi["ips"]},
         "wifi": wifi.summary(),
         "player": {"installed": sendspin_ctl.installed_version(), "name": sp.get("name") or sysi["hostname"],
-                   "service": sendspin_ctl.service_state()},
+                   "service": svc, "playback": sendspin_ctl.playback(svc)},
         "output": output,
         "bluetooth": bt,
         "volume": volume,
@@ -134,6 +140,11 @@ def home(h, q, body):
 @route("POST", "/api/reset")
 def do_reset(h, q, body):
     return reset.factory_reset(forget_wifi=bool(body.get("wifi")))
+
+
+@route("GET", "/api/ping", auth=False)
+def ping(h, q, body):
+    return {"ok": True}
 
 
 @route("GET", "/api/job")
@@ -154,6 +165,8 @@ def _start(title, steps, env=None):
 # --------------------------------------------------------------- sendspin
 @route("GET", "/api/sendspin/versions")
 def versions(h, q, body):
+    if q.get("latest") == "0":   # quick answer: skip the PyPI lookup
+        return {"installed": sendspin_ctl.installed_version()}
     return {"installed": sendspin_ctl.installed_version(),
             "latest": sendspin_ctl.latest_version()}
 
@@ -166,6 +179,11 @@ def sp_install(h, q, body):
 @route("POST", "/api/sendspin/upgrade")
 def sp_upgrade(h, q, body):
     return _start("Upgrade Sendspin", sendspin_ctl.upgrade_steps(), sendspin_ctl.UV_ENV)
+
+
+@route("GET", "/api/sendspin/state")
+def sp_state(h, q, body):
+    return {"service": sendspin_ctl.service_state()}   # light enough for the wizard to poll
 
 
 @route("POST", "/api/sendspin/service")
@@ -333,7 +351,7 @@ def wifi_connect(h, q, body):
     if not ssid or len(ssid.encode()) > 32:
         raise ApiError("Invalid SSID")
     if pw and not (8 <= len(pw) <= 63):
-        raise ApiError("WiFi password must be 8-63 characters")
+        raise ApiError("Wi-Fi password must be 8-63 characters")
     if not wifi.connect_async(ssid, pw, bool(body.get("hidden"))):
         raise ApiError("A connection attempt is already in progress", 409)
     return {"ok": True}
@@ -440,13 +458,40 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
+        if "Cache-Control" not in (extra or {}):
+            self.send_header("Cache-Control", "no-store")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         if self.set_cookie:
             self.send_header("Set-Cookie", self.set_cookie)
         self.end_headers()
         self.wfile.write(data)
+
+    def _static(self, name, ctype):
+        """Static files: kept in memory, gzipped once, revalidated with an ETag (so updates show at once)."""
+        path = os.path.join(STATIC, name)
+        mt = os.stat(path).st_mtime_ns
+        with _slock:
+            ent = _static_cache.get(name)
+            if not ent or ent[0] != mt:
+                with open(path, "rb") as f:
+                    raw = f.read()
+                ent = (mt, raw, gzip.compress(raw, 6), '"%s"' % hashlib.sha1(raw).hexdigest()[:16])
+                _static_cache[name] = ent
+        _, raw, gz, etag = ent
+        hdr = {"ETag": etag, "Cache-Control": "no-cache", "Vary": "Accept-Encoding"}
+        if self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            for k, v in hdr.items():
+                self.send_header(k, v)
+            self.end_headers()
+            return
+        if "gzip" in (self.headers.get("Accept-Encoding") or ""):
+            hdr["Content-Encoding"] = "gzip"
+            raw = gz
+        self._send(200, raw, ctype, hdr)
 
     def _handle(self, method):
         self.set_cookie = None
@@ -455,8 +500,7 @@ class Handler(BaseHTTPRequestHandler):
             u = u._replace(path="/")
         if method == "GET" and u.path in FILES:
             name, ctype = FILES[u.path]
-            with open(os.path.join(STATIC, name), "rb") as f:
-                return self._send(200, f.read(), ctype)
+            return self._static(name, ctype)
         entry = ROUTES.get((method, u.path))
         if not entry:
             return self._send(404, {"error": "Not found"})

@@ -10,8 +10,10 @@ SupplementaryGroups=audio
 Environment=HOME=/var/lib/sendspin
 # Wait (up to 60 s) for the Bluetooth speaker, if one is selected, so the player can see it
 ExecStartPre=-/opt/sendspinpi/hooks/wait-bt.sh
+# Forget the last playing/idle state from before this start
+ExecStartPre=-/bin/rm -f /var/lib/sendspin/playback.json
 TimeoutStartSec=120
-ExecStart=/opt/sendspinpi/uv-tools/sendspin/bin/python /opt/sendspinpi/hooks/sendspin-player.py daemon
+ExecStart=/opt/sendspinpi/uv-tools/sendspin/bin/python /opt/sendspinpi/hooks/sendspin-player.py daemon --hook-start /opt/sendspinpi/hooks/state-hook.sh --hook-stop /opt/sendspinpi/hooks/state-hook.sh
 Restart=always
 RestartSec=5
 
