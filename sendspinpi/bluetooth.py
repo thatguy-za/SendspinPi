@@ -253,6 +253,19 @@ def migrate():
             _restart_player()
 
 
+def forget_all():
+    """Remove every device BlueZ knows about, and our ALSA definition of the speaker."""
+    _, out, _ = _ctl("devices")
+    for line in out.splitlines():
+        m = re.match(r"Device ([0-9A-F:]{17}) ", line)
+        if m:
+            _ctl("remove", m.group(1))
+    try:
+        os.remove(BT_CONF)
+    except OSError:
+        pass
+
+
 def forget(mac):
     if selected_mac() == mac:
         unuse()

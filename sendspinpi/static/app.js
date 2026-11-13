@@ -73,27 +73,53 @@ function lazyCard(title, load, build, optional) {
 }
 
 // ---------- state / routing
-const state = { me: null, status: null, tab: "wizard", wiz: 0, cache: {} };
-const TABS = [["wizard", "Setup"], ["sendspin", "Sendspin"], ["audio", "Audio"], ["bluetooth", "Bluetooth"], ["wifi", "WiFi"], ["system", "System"], ["power", "Power"], ["account", "Account"]];
+const state = { me: null, status: null, tab: "home", wiz: 0, kind: null, timer: null, menu: false };
+// [id, path, label]. Every page has its own URL (History API); the server serves the app for each path.
+const ROUTES = [["home", "/", "Home"], ["wizard", "/setup", "Setup"], ["sendspin", "/sendspin", "Sendspin"],
+  ["audio", "/audio", "Audio output"], ["wifi", "/wifi", "WiFi"], ["system", "/system", "System"],
+  ["power", "/power", "Power"], ["account", "/account", "Account"]];
+const route = id => ROUTES.find(r => r[0] === id);
+function idForPath(p) {
+  p = p.replace(/\/+$/, "") || "/";
+  if (p === "/bluetooth") p = "/audio";   // Bluetooth now lives on the Audio output page
+  const r = ROUTES.find(r => r[1] === p);
+  return r ? r[0] : "home";
+}
+function go(id, replace) {
+  const path = route(id)[1];
+  if (location.pathname !== path) history[replace ? "replaceState" : "pushState"]({}, "", path);
+  state.tab = id; state.menu = false;
+  render();
+}
+window.addEventListener("popstate", () => { state.tab = idForPath(location.pathname); state.menu = false; render(); });
 
 async function boot() {
   try {
     state.status = await api("/api/status");
     state.me = state.status.username;
-    if (state.status.setup_complete && state.tab === "wizard" && !state.tabChosen) state.tab = "sendspin";
+    state.tab = idForPath(location.pathname);
+    const done = state.status.setup_complete;
+    // a new install opens the setup guide; once setup is complete the guide is hidden
+    if (!done && state.tab === "home" && location.pathname === "/") { state.tab = "wizard"; history.replaceState({}, "", "/setup"); }
+    if (done && state.tab === "wizard") { state.tab = "home"; history.replaceState({}, "", "/"); }
   } catch (e) { state.me = null; }
   render();
 }
 
 function render() {
+  clearInterval(state.timer);
   $app.textContent = "";
   if (!state.me) return $app.append(loginView());
-  const nav = h("nav", {}, TABS.map(([id, label]) => {
-    const b = h("button", { class: "nav" + (state.tab === id ? " on" : ""), onclick: () => { state.tab = id; state.tabChosen = true; state.menu = false; render(); } }, label);
-    b.insertAdjacentHTML("afterbegin", ICONS[id]); // static constants only
-    return b;
+  const nav = h("nav", {}, ROUTES.filter(r => r[0] !== "wizard" || !state.status.setup_complete).map(([id, path, label]) => {
+    const a = h("a", { class: "nav" + (state.tab === id ? " on" : ""), href: path });
+    a.addEventListener("click", e => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button) return; e.preventDefault(); go(id); });
+    a.insertAdjacentHTML("afterbegin", ICONS[id]); // static constants only
+    a.append(label);
+    return a;
   }));
-  const main = h("main", { class: "content" }, h("h1", { class: "page-title" }, TABS.find(t => t[0] === state.tab)[1]));
+  const here = route(state.tab);
+  document.title = "SendspinPi · " + here[2];
+  const main = h("main", { class: "content" }, h("h1", { class: "page-title" }, here[2]));
   const burger = h("button", { class: "burger", "aria-label": "Menu", "aria-expanded": String(!!state.menu), onclick: () => { state.menu = !state.menu; render(); } });
   burger.insertAdjacentHTML("afterbegin", svg('<path d="M4 7h16M4 12h16M4 17h16"/>'));
   const logout = h("button", { class: "nav logout", "aria-label": "Log out", title: "Log out", onclick: async () => { await api("/api/logout", {}); state.me = null; render(); } });
@@ -108,6 +134,7 @@ function render() {
 }
 const svg = d => '<svg viewBox="0 0 24 24">' + d + '</svg>';
 const ICONS = {
+  home: svg('<path d="M4 11l8-7 8 7"/><path d="M6 10v9a1 1 0 001 1h3v-6h4v6h3a1 1 0 001-1v-9"/>'),
   wizard: svg('<path d="M12 3l1.8 4.6L18.5 9l-4.7 1.4L12 15l-1.8-4.6L5.5 9l4.7-1.4z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>'),
   sendspin: svg('<path d="M4 9v6M8 6v12M12 3v18M16 7v10M20 10v4"/>'),
   audio: svg('<path d="M11 5L6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 010 7M18.5 5.5a9 9 0 010 13"/>'),
@@ -168,34 +195,13 @@ async function wizard(main) {
     },
     // 3 audio
     async () => {
-      const a = await api("/api/audio");
-      const isBt = a.selected === "sendspin_bt" || (a.selected || "").startsWith("bluealsa");
-      if (!state.audioMode) state.audioMode = isBt ? "bluetooth" : "wired";
-      let sel = isBt ? "" : (a.selected || ""), btInUse = isBt, btDevice = isBt ? a.selected : "";
-      const log = h("div", {}), panel = h("div", {});
-      const seg = h("div", { class: "seg" }, [["wired", "Speakers or DAC"], ["bluetooth", "Bluetooth speaker"]].map(([m, label]) =>
-        h("button", { class: state.audioMode === m ? "on" : "", onclick: () => { state.audioMode = m; render(); } }, label)));
-      const testBtn = getDev => btn("Play test tone", async () => {
-        log.textContent = ""; const r = await api("/api/audio/test", { device: getDev() });
-        log.append(jobView(r.job, null, "Test finished.", "Test failed."));
-      }, "sec");
-      if (state.audioMode === "wired") {
-        panel.append(deviceList(a, v => { sel = v; }, sel),
-          h("details", { class: "more" }, h("summary", {}, "Using an I²S DAC HAT?"), overlayPicker(a, () => render())),
-          testBtn(() => sel), log);
-      } else {
-        const b = await api("/api/bluetooth");
-        if (!b.available) panel.append(h("p", { class: "err" }, b.error || "Bluetooth is not available on this Pi."));
-        else {
-          btInUse = !!b.selected; btDevice = b.selected ? "sendspin_bt" : "";
-          panel.append(btPanel(b, () => render(), { banner: true }));
-        }
-      }
-      body.append(h("p", {}, "Where should the sound come out?"), seg, panel,
+      const host = h("div", {});
+      body.append(h("p", {}, "Where should the sound come out? Pick one type, then choose the output."), host,
         nav(async () => {
-          if (state.audioMode === "wired") await api("/api/sendspin/config", { audio_device: sel });
-          else if (!btInUse && !confirm("No Bluetooth speaker is selected yet. Continue anyway?")) return false;
-        }, state.audioMode === "wired" ? "Save & next" : "Next"));
+          const a = await api("/api/audio");
+          if (!a.selected && !confirm("No output has been chosen, so the system default will be used. Continue?")) return false;
+        }));
+      await audioOutputPanel(host, { wizard: true });
     },
     // 4 connect
     async () => {
@@ -227,8 +233,8 @@ async function wizard(main) {
     // 5 done
     () => {
       api("/api/setup/complete", { complete: true });
-      body.append(h("p", {}, "All set. Use the other tabs to update Sendspin or the OS, change WiFi, or reboot. You can re-run this guide any time from the Setup tab."),
-        btn("Go to dashboard", () => { state.tab = "sendspin"; state.wiz = 0; state.tabChosen = true; boot(); }));
+      body.append(h("p", {}, "All set. Home shows how everything is doing, and the other pages let you change the audio output, WiFi and updates. To run this guide again, use Reset on the System page."),
+        btn("Go to Home", async () => { state.wiz = 0; state.status = await api("/api/status"); go("home"); }));
     }
   ];
   await steps[state.wiz]();
@@ -305,6 +311,61 @@ function btPanel(b, onChange, opts) {
   return wrap;
 }
 
+// One place to choose where Sendspin plays: system outputs, an I²S DAC, or a Bluetooth speaker.
+// Used by the Audio output page and the setup guide.
+const OUTPUT_TYPES = { system: "System outputs", i2s: "I²S DAC", bluetooth: "Bluetooth" };
+async function audioOutputPanel(host, opts) {
+  opts = opts || {};
+  const a = await api("/api/audio");
+  const out = a.output;
+  const kind = state.kind || out.type;
+  let sel = out.type === "bluetooth" ? "" : a.selected;
+  const reload = () => { host.textContent = ""; return audioOutputPanel(host, opts); };
+  const head = h("div", { class: "active-output" }, h("small", {}, "Active output"),
+    h("b", {}, { system: "System output", i2s: "I²S DAC", bluetooth: "Bluetooth speaker" }[out.type] + " · " + out.label));
+  const seg = h("div", { class: "seg" }, Object.entries(OUTPUT_TYPES).map(([k, label]) =>
+    h("button", { class: kind === k ? "on" : "", onclick: () => { state.kind = k; reload(); } }, label)));
+  const panel = h("div", {}), log = h("div", {});
+  host.append(head, seg, panel);
+  const useBtn = type => btn("Use this output", async () => {
+    const r = await api("/api/sendspin/config", { audio_device: sel, audio_type: type });
+    await reload();
+    host.prepend(h("div", { class: "flash" }, "Output changed" + (r.restarted ? " and the player restarted." : ".")));
+  });
+  const testBtn = () => btn("Play test tone", async () => {
+    log.textContent = ""; const r = await api("/api/audio/test", { device: sel });
+    log.append(jobView(r.job, null, "Test finished. Did you hear it?", "The test failed. The log above shows why."));
+  }, "sec");
+  if (kind === "system") {
+    panel.append(deviceList(a, v => { sel = v; }, sel), h("div", { style: "margin-top:8px" }, useBtn("system"), testBtn()), log);
+    if (!opts.wizard) {
+      const raw = h("pre", {}, "Loading…"); let loaded = false;
+      const custom = h("input", { placeholder: "e.g. plughw:CARD=Device,DEV=0" });
+      custom.addEventListener("input", () => { if (custom.value) sel = custom.value.trim(); });
+      const more = h("details", { class: "more" }, h("summary", {}, "Advanced"),
+        h("label", {}, "Custom device (index, name prefix or ALSA name)"), custom,
+        h("label", {}, "Devices as Sendspin sees them"), raw);
+      more.addEventListener("toggle", () => { if (more.open && !loaded) { loaded = true; api("/api/audio/devices").then(r => { raw.textContent = r.text || "(none)"; }).catch(e => { raw.textContent = e.message; }); } });
+      panel.append(more);
+    }
+  } else if (kind === "i2s") {
+    panel.append(h("p", {}, "For DAC boards and HATs on the GPIO header (HiFiBerry, IQaudIO, PCM5102…). Choose yours, apply it, then restart the Pi."), overlayPicker(a, reload));
+    if (a.overlay) panel.append(h("div", { class: "group-title" }, "Output device"), deviceList(a, v => { sel = v; }, sel),
+      h("div", { style: "margin-top:8px" }, useBtn("i2s"), testBtn()), log);
+  } else {
+    panel.append(h("p", { class: "mut" }, "Looking for speakers…"));
+    const b = await api("/api/bluetooth");
+    panel.textContent = "";
+    if (!b.available) return panel.append(h("p", { class: "err" }, b.error || "Bluetooth is not available on this Pi."));
+    const auto = h("input", { type: "checkbox", class: "switch", role: "switch", "aria-label": "Reconnect automatically", checked: b.auto_reconnect });
+    auto.addEventListener("change", () => api("/api/bluetooth/auto", { enabled: auto.checked }).catch(e => { alert(e.message); auto.checked = !auto.checked; }));
+    panel.append(btPanel(b, reload, { banner: !!opts.wizard }),
+      h("div", { class: "divider" }, h("label", { class: "switch-row" },
+        h("span", {}, h("b", {}, "Reconnect automatically"), h("small", {}, "If the speaker disconnects, the Pi keeps trying to reconnect it.")), auto)),
+      h("p", { class: "note" }, "On a Pi Zero 2 W, Bluetooth and WiFi share one antenna. If audio stutters, move the Pi closer to the speaker or use ethernet."));
+  }
+}
+
 function overlayPicker(a, onApplied) {
   const sel = h("select", {}, h("option", { value: "" }, "None / USB / onboard (no overlay)"),
     Object.entries(a.overlays).map(([k, v]) => h("option", { value: k, selected: a.overlay === k }, v)));
@@ -332,6 +393,55 @@ function deviceList(a, onPick, selected) {
 
 // ---------- Tabs
 const views = {
+  async home(main) {
+    const alerts = h("div", { class: "alerts" }), grid = h("div", { class: "tiles" });
+    main.append(alerts, grid);
+    const chip = (text, id) => { const c = h("a", { class: "chip", href: route(id)[1] }, text); c.addEventListener("click", e => { e.preventDefault(); go(id); }); alerts.append(c); };
+    // a tile is a link to the page where that thing is managed
+    const tile = (id, label, value, sub, dot, extra) => {
+      const t = h("a", { class: "tile", href: route(id)[1] },
+        h("div", { class: "tile-label" }, label),
+        h("div", { class: "tile-value" }, dot ? h("i", { class: "dot " + dot }) : null, h("span", { class: "tile-text" }, value)),
+        sub ? h("div", { class: "tile-sub" }, sub) : null, extra || null);
+      t.addEventListener("click", e => { e.preventDefault(); go(id); });
+      return t;
+    };
+    const paint = d => {
+      const w = d.wifi, p = d.player, sys = d.system, o = d.output, bt = d.bluetooth, v = d.volume;
+      const svc = p.service.active;
+      const player = !p.installed ? ["Not installed", "bad"] : svc === "active" ? ["Running", "ok"] : svc === "activating" ? ["Starting", "warn"] : ["Stopped", "bad"];
+      let net;
+      if (w.connected) net = [w.ssid, [w.ip, w.signal != null ? w.signal + "%" : null].filter(Boolean).join(" · "), "ok"];
+      else if (w.hotspot) net = ["Setup hotspot", "Join it and open 10.42.0.1", "warn"];
+      else if (w.ethernet) net = ["Ethernet", w.ethernet.ip, "ok"];
+      else net = [w.available ? "Not connected" : "No WiFi", "", "bad"];
+      const temp = sys.cpu_temp_c;
+      const level = v.level, pct = level == null ? null : Math.max(0, Math.min(100, level));
+      const meter = h("div", { class: "meter" }, h("i", { style: "width:" + (v.muted ? 0 : pct || 0) + "%" }));
+      const kids = [
+        tile("sendspin", "Player", player[0], p.name + (p.installed ? " · v" + p.installed : ""), player[1]),
+        tile("audio", "Audio output", { system: "System output", i2s: "I²S DAC", bluetooth: "Bluetooth" }[o.type], o.label),
+        tile("sendspin", "Volume", v.muted ? "Muted" : pct == null ? "—" : pct + "%", pct == null ? "Not set yet" : null, null, pct == null ? null : meter),
+        tile("wifi", "Network", net[0], net[1], net[2]),
+        tile("audio", "Bluetooth", bt ? bt.name : "No speaker", bt ? (bt.connected ? "Connected" : "Not connected") : "None selected", bt ? (bt.connected ? "ok" : "warn") : null),
+        tile("system", "CPU temperature", temp == null ? "—" : temp + " °C", null, temp == null ? null : temp >= 80 ? "bad" : temp >= 70 ? "warn" : "ok"),
+        tile("system", "Uptime", uptime(sys.uptime_s)),
+        tile("system", "Memory", sys.mem_avail_kb ? bytes(sys.mem_avail_kb * 1024) + " free" : "—", sys.mem_total_kb ? "of " + bytes(sys.mem_total_kb * 1024) : null)
+      ];
+      grid.textContent = "";
+      grid.append(...kids);
+    };
+    const d0 = await api("/api/home");
+    paint(d0);
+    if (d0.system.reboot_required) chip("Restart needed to finish updates", "power");
+    state.timer = setInterval(async () => {
+      if (!grid.isConnected) return clearInterval(state.timer);
+      try { paint(await api("/api/home")); } catch (e) { /* the Pi may be rebooting */ }
+    }, 10000);
+    // updates are slow to look up: show them as chips when they arrive
+    api("/api/system/upgradable").then(u => { const n = u.packages.length; if (n) chip(n + " system update" + (n > 1 ? "s" : "") + " available", "system"); }).catch(() => {});
+    api("/api/selfupdate").then(u => { if (u.available) chip("SendspinPi " + u.latest + " available", "system"); }).catch(() => {});
+  },
   wizard,
   async sendspin(main) {
     const s = state.status, sp = s.sendspin;
@@ -357,39 +467,14 @@ const views = {
         upBtn,
         btn("Start", () => svc("enable"), "sec"), btn("Stop", () => svc("stop"), "sec"), btn("Restart", () => svc("restart"), "sec")),
       log),
-      h("div", { class: "card" }, h("h2", {}, "Logs"), out, btn("Refresh", () => loadLogs(out), "sec"),
-        btn("Setup guide", () => { state.tab = "wizard"; state.wiz = 0; render(); }, "sec")));
+      h("div", { class: "card" }, h("h2", {}, "Logs"), out, btn("Refresh", () => loadLogs(out), "sec")));
     async function svc(a) { await api("/api/sendspin/service", { action: a }); await boot_keep(); }
     loadLogs(out);
   },
   async audio(main) {
-    const a = await api("/api/audio");
-    let sel = a.selected;
-    const raw = h("pre", {}, "Loading…");
-    api("/api/audio/devices").then(r => { raw.textContent = r.text || "(none)"; }).catch(e => { raw.textContent = e.message; });
-    const log = h("div", {});
-    main.append(h("div", { class: "card" }, h("h2", {}, "Audio output"), overlayPicker(a, () => render()),
-      h("h3", {}, "Output device"), deviceList(a, v => { sel = v; }, a.selected),
-      h("label", {}, "Custom device (index, name prefix or ALSA name)"),
-      (() => { const i = h("input", { placeholder: "e.g. plughw:CARD=Device,DEV=0" }); i.addEventListener("input", () => { if (i.value) sel = i.value.trim(); }); return i; })(),
-      btn("Save", async () => { const r = await api("/api/sendspin/config", { audio_device: sel }); alert("Saved" + (r.restarted ? " and player restarted" : "")); }),
-      btn("Play test tone", async () => { log.textContent = ""; const r = await api("/api/audio/test", { device: sel }); log.append(jobView(r.job)); }, "sec"), log),
-      h("div", { class: "card" }, h("h2", {}, "Devices as Sendspin sees them"), raw));
-  },
-  async bluetooth(main) {
-    const card = h("div", { class: "card" }, h("p", { class: "mut" }, "Looking for speakers…"));
-    main.append(card);
-    const b = await api("/api/bluetooth");
-    card.textContent = "";
-    if (!b.available) return card.append(h("p", { class: "err" }, b.error || "Bluetooth is not available."));
-    const auto = h("input", { type: "checkbox", class: "switch", role: "switch", "aria-label": "Reconnect automatically", checked: b.auto_reconnect });
-    auto.addEventListener("change", () => api("/api/bluetooth/auto", { enabled: auto.checked }).catch(e => { alert(e.message); auto.checked = !auto.checked; }));
-    card.append(
-      h("p", {}, "Play Sendspin through a Bluetooth speaker. Volume changes from your Sendspin server control the speaker's volume."),
-      btPanel(b, () => render()),
-      h("div", { class: "divider" }, h("label", { class: "switch-row" },
-        h("span", {}, h("b", {}, "Reconnect automatically"), h("small", {}, "If the speaker disconnects, the Pi keeps trying to reconnect it.")), auto)),
-      h("p", { class: "note" }, "On a Pi Zero 2 W, Bluetooth and WiFi share one antenna. If audio stutters, move the Pi closer to the speaker or use ethernet."));
+    const host = h("div", { class: "card" });
+    main.append(host);
+    await audioOutputPanel(host);
   },
   async wifi(main) {
     const card = h("div", { class: "card" }, h("p", { class: "mut" }, "Checking the network…"));
@@ -430,10 +515,6 @@ const views = {
     const upP = api("/api/system/upgradable"), auP = api("/api/updates"), suP = api("/api/selfupdate");
     const sys = (await api("/api/status")).system;
     const log = h("div", {});
-    const grid = h("div", { class: "grid" }, [["OS", sys.os], ["Model", sys.model], ["Uptime", uptime(sys.uptime_s)],
-      ["Memory free", sys.mem_avail_kb ? bytes(sys.mem_avail_kb * 1024) : "?"],
-      ["Disk free", sys.disk ? bytes(sys.disk.free) : "?"], ["CPU temp", sys.cpu_temp_c != null ? sys.cpu_temp_c + " °C" : "?"], ["IP", sys.ips.join(", ")]]
-      .map(([k, v]) => h("div", {}, h("small", {}, k), v)));
     // System updates card: buttons are there at once, the package status and automatic-update section fill in later
     const statusSlot = h("div", {}, h("p", { class: "mut" }, "Checking for updates…"));
     const updateNow = btn("Update now", async () => {
@@ -451,14 +532,17 @@ const views = {
     }).catch(e => { statusSlot.textContent = e.message; });
     const autoSlot = h("div", { class: "divider" }, h("p", { class: "mut" }, "Loading automatic updates…"));
     auP.then(au => { autoSlot.textContent = ""; autoSlot.append(autoUpdatesSection(au)); }).catch(() => autoSlot.remove());
-    main.append(h("div", { class: "card" }, grid,
-      sys.reboot_required ? h("div", { class: "callout" }, "A restart is needed to finish updates. Use the Power tab when you're ready.") : null),
+    if (sys.reboot_required) main.append(h("div", { class: "callout" }, "A restart is needed to finish updates. Use the Power page when you're ready."));
+    main.append(
       lazyCard("SendspinPi updates", () => suP, selfUpdateCard, true),
       h("div", { class: "card" }, h("h2", {}, "System updates"), statusSlot,
         h("div", { style: "margin-top:8px" },
           btn("Check for updates", async () => { log.textContent = ""; const r = await api("/api/system/apt-update", {}); log.append(jobView(r.job, () => setTimeout(() => render(), 1500))); }, "sec"),
           updateNow),
-        log, autoSlot));
+        log, autoSlot),
+      h("div", { class: "card" }, h("h2", {}, "Reset"),
+        h("p", {}, "Erase this player's settings and run setup again from the start."),
+        btn("Reset everything…", resetDialog, "sec bad")));
   },
   power(main) {
     main.append(h("div", { class: "card" }, h("p", {}, "Shutting down needs physical access to power the Pi back on."),
@@ -556,6 +640,36 @@ function selfUpdateCard(u) {
 
 async function loadLogs(el) { try { el.textContent = ""; el.append(h("pre", {}, (await api("/api/sendspin/logs")).logs || "(empty)")); } catch (e) { el.textContent = e.message; } }
 async function boot_keep() { state.status = await api("/api/status"); render(); }
+
+// Minimal modal dialog (native <dialog>)
+function modal(build) {
+  const dlg = h("dialog", { class: "modal" });
+  const close = () => { dlg.close(); dlg.remove(); };
+  dlg.addEventListener("cancel", () => dlg.remove());
+  dlg.append(build(close));
+  document.body.append(dlg);
+  dlg.showModal();
+}
+
+function resetDialog() {
+  const wifiBox = h("input", { type: "checkbox" });
+  modal(close => h("div", {},
+    h("h2", {}, "Reset everything?"),
+    h("p", {}, "This returns the player to a fresh start and opens the setup guide again. It erases:"),
+    h("ul", { class: "plain" }, ["The player's name, audio output and volume", "All Bluetooth speakers and their pairings", "The I²S DAC setting", "Automatic update settings"].map(t => h("li", {}, t))),
+    h("label", { class: "opt" }, wifiBox, h("span", {}, h("b", {}, "Also forget saved WiFi networks"), h("small", {}, "The Pi leaves your network and starts its setup hotspot."))),
+    h("p", { class: "mut" }, "Your login and the installed Sendspin version are kept."),
+    h("div", { class: "dlg-actions" }, btn("Cancel", () => close(), "sec"),
+      btn("Reset everything", async () => {
+        const r = await api("/api/reset", { wifi: wifiBox.checked });
+        close();
+        state.status = await api("/api/status");
+        state.wiz = 0; state.kind = null;
+        if (r.forgot_wifi) alert("Reset done. The Pi is leaving your WiFi and will start the SendspinPi-Setup hotspot. Join it and open http://10.42.0.1/ to set it up again.");
+        else if (r.reboot_recommended) alert("Reset done. Restart the Pi (Power page) so the DAC setting is removed.");
+        go("wizard");
+      }, "bad"))));
+}
 
 // views may be async; wrap so errors show instead of blank page
 for (const k of Object.keys(views)) {

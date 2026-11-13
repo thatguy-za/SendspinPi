@@ -8,9 +8,10 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import audio, bluetooth, config, selfupdate, sendspin_ctl, system, updates, util, wifi
+from . import audio, bluetooth, config, reset, selfupdate, sendspin_ctl, system, updates, util, wifi
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
+PAGES = ("/", "/setup", "/sendspin", "/audio", "/bluetooth", "/wifi", "/system", "/power", "/account")
 FILES = {"/": ("index.html", "text/html; charset=utf-8"),
          "/app.js": ("app.js", "application/javascript; charset=utf-8"),
          "/style.css": ("style.css", "text/css; charset=utf-8")}
@@ -102,6 +103,33 @@ def status(h, q, body):
             "job": util.active_job()}
 
 
+@route("GET", "/api/home")
+def home(h, q, body):
+    sysi = system.info()
+    sp = sendspin_ctl.read_settings()
+    mac = bluetooth.selected_mac()
+    bt = None
+    if mac:
+        d = bluetooth.info(mac)
+        bt = {"mac": mac, "name": d["name"] if d else mac, "connected": bool(d and d["connected"])}
+    return {
+        "system": {"hostname": sysi["hostname"], "uptime_s": sysi["uptime_s"], "cpu_temp_c": sysi["cpu_temp_c"],
+                   "mem_total_kb": sysi["mem_total_kb"], "mem_avail_kb": sysi["mem_avail_kb"],
+                   "reboot_required": sysi["reboot_required"], "ips": sysi["ips"]},
+        "wifi": wifi.summary(),
+        "player": {"installed": sendspin_ctl.installed_version(), "name": sp.get("name") or sysi["hostname"],
+                   "service": sendspin_ctl.service_state()},
+        "output": audio.output_summary(),
+        "bluetooth": bt,
+        "volume": {"level": sp.get("player_volume"), "muted": bool(sp.get("player_muted"))},
+    }
+
+
+@route("POST", "/api/reset")
+def do_reset(h, q, body):
+    return reset.factory_reset(forget_wifi=bool(body.get("wifi")))
+
+
 @route("GET", "/api/job")
 def job(h, q, body):
     st = util.job_state(q.get("id", ""), int(q.get("since", "0") or 0))
@@ -155,6 +183,9 @@ def sp_config(h, q, body):
         if dev and not audio.valid_device(dev):
             raise ApiError("Invalid audio device")
         sendspin_ctl.set_audio_device(dev)
+        kind = str(body.get("audio_type", ""))
+        if kind in ("system", "i2s"):
+            config.update(audio_type=kind)
     if kw:
         sendspin_ctl.write_settings(**kw)
     restarted = False
@@ -181,7 +212,8 @@ def setup_complete(h, q, body):
 def audio_info(h, q, body):
     res = audio.cards()
     res.update(overlays=audio.OVERLAYS, overlay=audio.current_overlay(),
-               selected=sendspin_ctl.read_settings().get("audio_device", ""))
+               selected=sendspin_ctl.read_settings().get("audio_device", ""),
+               output=audio.output_summary())
     return res
 
 
@@ -407,6 +439,8 @@ class Handler(BaseHTTPRequestHandler):
     def _handle(self, method):
         self.set_cookie = None
         u = urlparse(self.path)
+        if method == "GET" and u.path.rstrip("/") in PAGES[1:]:
+            u = u._replace(path="/")
         if method == "GET" and u.path in FILES:
             name, ctype = FILES[u.path]
             with open(os.path.join(STATIC, name), "rb") as f:

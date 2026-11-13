@@ -4,7 +4,8 @@ A lightweight web UI for running the [Sendspin CLI](https://github.com/Sendspin/
 
 - **Guided setup wizard**: name the player, install Sendspin, pick your DAC, test the sound, connect to your server.
 - **Sendspin management**: install, update, start/stop, logs.
-- **Audio**: choose a USB/onboard output or an I²S DAC HAT (writes the `dtoverlay` for you), with a test tone.
+- **Home**: live status of the player, audio output, volume, WiFi, Bluetooth speaker, CPU temperature and uptime.
+- **Audio output**: choose one output type (system outputs, an I²S DAC HAT, or a Bluetooth speaker), with a test tone.
 - **OS updates**: refresh package lists and run full upgrades with live output.
 - **WiFi**: scan, connect, forget networks. If the Pi has no network, it starts a setup hotspot.
 - **Power**: reboot and shut down.
@@ -36,6 +37,23 @@ cd SendspinPi
 sudo ./install.sh
 ```
 
+## Pages
+
+Every page has its own address, for example `http://<hostname>.local/sendspin`:
+
+| Page | Address | What it does |
+|---|---|---|
+| Home | `/` | Live status: player, audio output, volume, WiFi, Bluetooth speaker, CPU temperature, uptime, memory |
+| Setup | `/setup` | The setup guide. Hidden once setup is complete |
+| Sendspin | `/sendspin` | Install and update Sendspin, start and stop the player, logs |
+| Audio output | `/audio` | Choose one output: system outputs, an I²S DAC HAT, or a Bluetooth speaker |
+| WiFi | `/wifi` | Join, forget and scan networks |
+| System | `/system` | OS and SendspinPi updates, automatic updates, and **Reset** |
+| Power | `/power` | Reboot and shut down |
+| Account | `/account` | Change the login |
+
+**Reset** (System page) returns the player to a fresh start and reopens the setup guide. It erases the player's name, audio output and volume, all Bluetooth pairings, the I²S DAC setting and the automatic-update settings. You can also tick a box to forget saved WiFi networks too. Your login and the installed Sendspin version are kept.
+
 ## First use
 
 1. Open `http://<hostname>.local/` (or the Pi's IP address) in a browser.
@@ -49,13 +67,13 @@ If the Pi can't connect to a network about a minute after boot, it starts a hots
 
 ### I²S DAC HATs
 
-In **Audio**, pick your HAT from the list and apply it. This adds a managed block to `/boot/firmware/config.txt` (a backup is saved next to it as `config.txt.sendspinpi.bak`) and needs a reboot. Choosing "None" removes it again.
+In **Audio output**, choose **I²S DAC**, pick your HAT from the list and apply it. This adds a managed block to `/boot/firmware/config.txt` (a backup is saved next to it as `config.txt.sendspinpi.bak`) and needs a reboot. Choosing "None" removes it again.
 
 ### Bluetooth speakers
 
-Open the **Bluetooth** tab, put your speaker in pairing mode, press **Scan**, then **Pair & connect** and **Use for Sendspin**. The speaker is trusted, so it can reconnect on its own after a reboot. **Auto-reconnect** (on by default, toggle in the Bluetooth tab) also makes the Pi retry every 30 seconds if the speaker drops, and the player restarts when it comes back. It only applies to the speaker currently used for Sendspin.
+Open **Audio output**, choose **Bluetooth**, put your speaker in pairing mode, press **Scan**, then **Pair & connect** and **Use for Sendspin**. The speaker is trusted, so it can reconnect on its own after a reboot. **Auto-reconnect** (on by default, toggle on the Audio output page) also makes the Pi retry every 30 seconds if the speaker drops, and the player restarts when it comes back. It only applies to the speaker currently used for Sendspin.
 
-While a Bluetooth speaker is the output, volume changes from your Sendspin server are applied to the speaker's own volume (through Sendspin's `hook_set_volume` and `bluealsactl`). Choosing another output in **Audio**, or pressing **Stop using**, switches back.
+While a Bluetooth speaker is the output, volume changes from your Sendspin server are applied to the speaker's own volume (through Sendspin's `hook_set_volume` and `bluealsactl`). Choosing another output on the **Audio output** page, or pressing **Stop using**, switches back.
 
 Audio uses [BlueALSA](https://github.com/arkq/bluez-alsa), which is much lighter than PipeWire. The Pi Zero 2 W shares one antenna between WiFi and Bluetooth, so audio may stutter if the signal is weak. Keep the Pi near the speaker, or use ethernet if you can.
 

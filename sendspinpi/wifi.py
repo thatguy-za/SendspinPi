@@ -1,9 +1,10 @@
 """WiFi management via NetworkManager (nmcli) plus a fallback setup hotspot."""
+import re
 import threading
 import time
 
 from . import config
-from .util import run
+from .util import cached, run
 
 HOTSPOT_CON = "SendspinPi-Setup"
 HOTSPOT_IP = "10.42.0.1"
@@ -213,3 +214,30 @@ def hotspot_loop():
         except Exception:  # noqa: BLE001
             pass
         time.sleep(30)
+
+
+def _signal_percent(dev):
+    rc, out, _ = run(["iw", "dev", dev, "link"])
+    m = re.search(r"signal:\s*(-?\d+)\s*dBm", out) if rc == 0 else None
+    return max(0, min(100, 2 * (int(m.group(1)) + 100))) if m else None
+
+
+def _summary():
+    _, rows, _ = _nm("DEVICE,TYPE,STATE,CONNECTION", "dev")
+    wifi_row = next((r for r in rows if len(r) >= 4 and r[1] == "wifi"), None)
+    eth_row = next((r for r in rows if len(r) >= 4 and r[1] == "ethernet" and r[2].startswith("connected")), None)
+    res = {"available": wifi_row is not None, "connected": False, "hotspot": False,
+           "ssid": None, "ip": None, "signal": None, "ethernet": None}
+    if wifi_row:
+        dev, _, state, conn = wifi_row[:4]
+        res["hotspot"] = conn == HOTSPOT_CON
+        if state.startswith("connected") and not res["hotspot"]:
+            res.update(connected=True, ssid=conn or None, ip=(ip_of(dev) or "").split("/")[0] or None, signal=_signal_percent(dev))
+    if eth_row:
+        res["ethernet"] = {"name": eth_row[3], "ip": (ip_of(eth_row[0]) or "").split("/")[0] or None}
+    return res
+
+
+def summary():
+    """One quick look at the network for the Home page (remembered for a few seconds)."""
+    return cached("wifi_summary", 8, _summary)

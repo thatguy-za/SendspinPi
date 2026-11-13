@@ -113,3 +113,23 @@ def test_tone_steps(device):
     if state == "active":
         steps.append(["systemctl", "start", sendspin_ctl.SERVICE])
     return steps
+
+
+def output_summary():
+    """Active output as {type, label, device}: type is system, i2s or bluetooth."""
+    from . import config
+    dev = sendspin_ctl.read_settings().get("audio_device", "")
+    if dev == "sendspin_bt" or dev.startswith("bluealsa"):
+        from . import bluetooth
+        mac = bluetooth.selected_mac()
+        d = bluetooth.info(mac) if mac else None
+        return {"type": "bluetooth", "label": d["name"] if d else "Bluetooth speaker", "device": dev}
+    label = "System default"
+    if dev:
+        label = dev
+        for c in cached("aplay_cards", 10, cards)["cards"]:
+            if c["alsa"] == dev:
+                label = c["label"]
+                break
+    kind = config.load().get("audio_type") or ("i2s" if current_overlay() else "system")
+    return {"type": kind, "label": label, "device": dev}
