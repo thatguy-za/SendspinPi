@@ -12,13 +12,12 @@ from .util import run
 BT_PCM = "sendspin_bt"
 BT_CONF = os.environ.get("SENDSPINPI_BTCONF", "/etc/alsa/conf.d/99-sendspinpi-bluetooth.conf")
 BT_CONF_TEMPLATE = """# Managed by SendspinPi - changes here are overwritten.
+# A plain bluealsa PCM (no plug wrapper): PortAudio drops devices that reject its
+# small probe buffers, which a plug-wrapped bluealsa PCM does.
 pcm.%(name)s {
-    type plug
-    slave.pcm {
-        type bluealsa
-        device "%(mac)s"
-        profile "a2dp"
-    }
+    type bluealsa
+    device "%(mac)s"
+    profile "a2dp"
     hint {
         show on
         description "Bluetooth speaker (SendspinPi)"
@@ -194,6 +193,18 @@ def migrate():
     m = re.match(r"bluealsa:DEV=([0-9A-Fa-f:]{17})", dev)
     if m:
         use(m.group(1).upper())
+        return
+    # Existing installs: upgrade the old plug-wrapped definition to the plain one.
+    mac = _conf_mac()
+    if dev == BT_PCM and mac:
+        try:
+            with open(BT_CONF) as f:
+                old_conf = f.read()
+        except OSError:
+            return
+        if "type plug" in old_conf:
+            _write_conf(mac)
+            _restart_player()
 
 
 def forget(mac):
