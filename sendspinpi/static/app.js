@@ -259,10 +259,12 @@ function btPanel(b, onChange, opts) {
       : d.connected ? h("span", { class: "tag ok" }, "connected")
       : d.paired ? h("span", { class: "tag" }, "not connected") : null;
     const acts = h("div", { class: "dev-actions" });
-    if (!d.paired) acts.append(btn(lost ? "Pair again" : "Pair", async () => {
+    const temp = d.paired && d.bonded === false;   // paired, but only in memory: lost on restart
+    const startPair = async () => {
       log.textContent = ""; const r = await post("pair", d.mac);
       log.append(jobView(r.job, () => setTimeout(onChange, 1200), "Paired and connected.", "Pairing failed. Put the speaker in pairing mode and try again."));
-    }));
+    };
+    if (!d.paired) acts.append(btn(lost ? "Pair again" : "Pair", startPair));
     else {
       if (d.in_use) acts.append(btn("Play test tone", async () => {
         log.textContent = ""; const r = await api("/api/audio/test", { device: "sendspin_bt" });
@@ -271,15 +273,18 @@ function btPanel(b, onChange, opts) {
       else if (d.connected) acts.append(btn("Use for Sendspin", async () => { await post("use", d.mac); onChange(); }));
       if (d.connected) acts.append(btn("Disconnect", async () => { await post("disconnect", d.mac); onChange(); }, "sec"));
       else acts.append(btn("Connect", async () => { await post("connect", d.mac); onChange(); }));
+      if (temp) acts.append(btn("Make permanent", startPair, "sec"));
     }
     const links = h("span", { class: "dev-links" });
     if (d.in_use) links.append(link("Stop using", async () => { await post("use", ""); onChange(); }));
     if (d.paired) links.append(link("Forget", async () => { if (confirm("Forget " + d.name + "?")) { await post("forget", d.mac); onChange(); } }, "bad"));
     if (links.children.length) acts.append(links);
     return h("div", { class: "dev-row" },
-      h("div", { class: "dev-head" }, h("div", {}, h("b", {}, d.name), h("small", {}, d.mac)), tag), acts);
+      h("div", { class: "dev-head" }, h("div", {}, h("b", {}, d.name), h("small", {}, d.mac)), tag),
+      temp ? h("div", { class: "callout" }, "This pairing is temporary and will be lost when the Pi restarts. Put the speaker in pairing mode and press Make permanent.") : null,
+      acts);
   };
-  const paint = devs => {
+  const paint = (devs, scanned) => {
     mineBox.textContent = nearList.textContent = "";
     const cur = devs.find(d => d.in_use);
     const mine = devs.filter(d => d.paired || d.in_use), nearby = devs.filter(d => !d.paired && !d.in_use);
@@ -287,12 +292,15 @@ function btPanel(b, onChange, opts) {
       cur && cur.paired && opts.banner ? h("div", { class: "flash" }, cur.name + " is set as your Sendspin output.") : null,
       devs.some(d => d.in_use && !d.paired) ? h("div", { class: "callout" }, "The Pi has forgotten this speaker. It pairs again automatically when the speaker is switched on and nearby, or put it in pairing mode and press Pair again.") : null,
       ...mine.map(device)].filter(Boolean));
-    nearList.append(...(nearby.length ? nearby.map(device)
+    // While a speaker is connected, keep other devices out of the way until the user scans
+    const busy = devs.some(d => d.connected || d.in_use);
+    nearList.append(...(busy && !scanned ? [h("p", { class: "mut" }, "Looking for another speaker? Press Scan.")]
+      : nearby.length ? nearby.map(device)
       : [h("p", { class: "mut" }, "Switch your speaker to pairing mode, then press Scan.")]));
   };
   paint(b.devices);
   wrap.append(mineBox, h("div", { class: "group-title" }, "Add a speaker"),
-    btn("Scan", async () => { nearList.textContent = "Scanning for 8 seconds…"; const r = await api("/api/bluetooth/scan", {}); paint(r.devices); }, "sec"),
+    btn("Scan", async () => { nearList.textContent = "Scanning for 8 seconds…"; const r = await api("/api/bluetooth/scan", {}); paint(r.devices, true); }, "sec"),
     nearList, log);
   return wrap;
 }

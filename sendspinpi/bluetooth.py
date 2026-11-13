@@ -50,6 +50,7 @@ def adapter():
 def ensure_powered():
     run(["rfkill", "unblock", "bluetooth"])
     _ctl("power", "on")
+    _ctl("pairable", "on")  # if the adapter isn't bondable, BlueZ keeps pairings in memory only
 
 
 def info(mac):
@@ -64,7 +65,9 @@ def info(mac):
     icon = re.search(r"^\s*Icon: (\S+)", out, re.M)
     audio = bool((icon and icon.group(1).startswith("audio")) or "Audio Sink" in out
                  or "0000110b" in out.lower())
-    return {"mac": mac, "name": name.group(1).strip() if name else mac, "paired": flag("Paired"),
+    bm = re.search(r"^\s*Bonded: (\w+)", out, re.M)
+    bonded = (bm.group(1) == "yes") if bm else flag("Paired")
+    return {"mac": mac, "name": name.group(1).strip() if name else mac, "paired": flag("Paired"), "bonded": bonded,
             "trusted": flag("Trusted"), "connected": flag("Connected"), "audio": audio,
             "known_type": bool(icon), "seen": bool(re.search(r"^\s*RSSI:", out, re.M))}
 
@@ -123,18 +126,36 @@ def scan(seconds=8):
     return devices()
 
 
-def pair_steps(mac):
-    def go(log):
+def _pair_permanently(mac, log):
+    """Pair with the speaker so the link key is saved (Bonded: yes). A pairing that exists but isn't
+    bonded is thrown away and redone. Raises RuntimeError with a user-friendly message on failure."""
+    ensure_powered()
+    d = info(mac)
+    if d and d["paired"] and not d["bonded"]:
+        log("This pairing is only temporary and would be lost on restart. Pairing again…")
+        _ctl("remove", mac)
+        d = None
+    if not d or not d["paired"]:
+        if not d or not d["seen"]:
+            log("Looking for the speaker (keep it in pairing mode)…")
+            _ctl("--timeout", "8", "scan", "on", timeout=20)
+        log("Pairing with %s…" % mac)
+        rc, out, err = run(["bluetoothctl", "--agent", "NoInputNoOutput", "pair", mac], timeout=60)
+        log((out + err).strip())
         d = info(mac)
         if not d or not d["paired"]:
-            log("Pairing with %s…" % mac)
-            rc, out, err = run(["bluetoothctl", "--agent", "NoInputNoOutput", "pair", mac], timeout=60)
-            log((out + err).strip())
-            d = info(mac)
-            if not d or not d["paired"]:
-                raise RuntimeError("Pairing failed. Put the speaker in pairing mode and try again.")
-        log("Trusting (so it reconnects automatically)…")
-        log(" ".join(_ctl("trust", mac)[1:]).strip())
+            raise RuntimeError("Pairing failed. Put the speaker in pairing mode and try again.")
+    log("Trusting (so it reconnects automatically)…")
+    _ctl("trust", mac)
+    if not d["bonded"]:
+        d = info(mac)
+        if d and not d["bonded"]:
+            log("Warning: the pairing was not saved permanently, so it may need repeating after a restart.")
+
+
+def pair_steps(mac):
+    def go(log):
+        _pair_permanently(mac, log)
         log("Connecting…")
         rc, out, err = _ctl("connect", mac, timeout=40)
         log((out + err).strip())
@@ -142,13 +163,19 @@ def pair_steps(mac):
         if not d or not d["connected"]:
             raise RuntimeError("Paired, but could not connect.")
         log("Connected to %s." % d["name"])
+        if selected_mac() == mac:
+            log("Restarting the player so it picks up the speaker…")
+            _restart_player()
     return [go]
 
 
 def connect(mac):
     rc, out, err = _ctl("connect", mac, timeout=40)
     d = info(mac)
-    return bool(d and d["connected"]), (out + err).strip()
+    ok = bool(d and d["connected"])
+    if ok and selected_mac() == mac:
+        _restart_player()  # the player only sees devices that exist when it starts
+    return ok, (out + err).strip()
 
 
 def disconnect(mac):
@@ -223,21 +250,36 @@ def auto_repair(mac):
     d = info(mac)
     if not d or not d["seen"]:
         return False  # not in range / not in pairing mode
-    run(["bluetoothctl", "--agent", "NoInputNoOutput", "pair", mac], timeout=60)
-    d = info(mac)
-    if not d or not d["paired"]:
+    try:
+        _pair_permanently(mac, lambda *_: None)
+    except RuntimeError:
         return False
-    _ctl("trust", mac)
     _ctl("connect", mac, timeout=40)
     return True
+
+
+def _player_cannot_see_speaker():
+    """True if the *current* run of the player logged that it can't find the Bluetooth device
+    (it only looks for devices at start-up, and its audio thread then dies silently)."""
+    _, inv, _ = run(["systemctl", "show", sendspin_ctl.SERVICE, "-p", "InvocationID", "--value"])
+    inv = inv.strip()
+    if not inv:
+        return False
+    _, logs, _ = run(["journalctl", "_SYSTEMD_INVOCATION_ID=" + inv, "-o", "cat", "--no-pager", "-n", "300"])
+    return "No output device matching" in logs
 
 
 def watchdog_loop():
     """Keep the selected speaker connected; restart the player when it (re)appears."""
     time.sleep(45)
+    try:
+        ensure_powered()  # also turns on "pairable", which is off by default on this Pi
+    except Exception:  # noqa: BLE001
+        pass
     last = None
     attempt = 0.0
     repair_at = 0.0
+    fixed_at = 0.0
     while True:
         try:
             mac = selected_mac()
@@ -260,6 +302,11 @@ def watchdog_loop():
                     connected = bool(d and d["connected"])
                 if connected and last is False and sendspin_ctl.service_state()["enabled"] == "enabled":
                     sendspin_ctl.service_action("restart")
+                    fixed_at = time.time()
+                elif (connected and time.time() - fixed_at > 90
+                        and sendspin_ctl.service_state()["active"] == "active" and _player_cannot_see_speaker()):
+                    sendspin_ctl.service_action("restart")
+                    fixed_at = time.time()
                 last = connected
         except Exception:  # noqa: BLE001
             pass

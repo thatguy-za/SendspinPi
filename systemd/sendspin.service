@@ -8,6 +8,9 @@ ConditionPathExists=/opt/sendspinpi/bin/sendspin
 User=sendspin
 SupplementaryGroups=audio
 Environment=HOME=/var/lib/sendspin
+# Wait (up to 60 s) for the Bluetooth speaker, if one is selected, so the player can see it
+ExecStartPre=-/opt/sendspinpi/hooks/wait-bt.sh
+TimeoutStartSec=120
 ExecStart=/opt/sendspinpi/bin/sendspin daemon
 Restart=always
 RestartSec=5
