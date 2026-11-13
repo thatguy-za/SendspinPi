@@ -179,7 +179,6 @@ async function wizard(main) {
         else {
           btInUse = !!b.selected; btDevice = b.selected ? "sendspin_bt" : "";
           panel.append(btPanel(b, () => render()));
-          if (btInUse) panel.append(testBtn(() => btDevice), log);
         }
       }
       body.append(h("p", {}, "Where should the sound come out?"), seg, panel,
@@ -264,7 +263,11 @@ function btPanel(b, onChange) {
   const paint = devs => {
     lists.textContent = "";
     const cur = devs.find(d => d.in_use);
-    if (cur) lists.append(h("div", { class: "flash" }, cur.name + " is set as your Sendspin output."));
+    if (cur) lists.append(h("div", { class: "flash" }, cur.name + " is set as your Sendspin output."),
+      btn("Play test tone", async () => {
+        log.textContent = ""; const r = await api("/api/audio/test", { device: "sendspin_bt" });
+        log.append(jobView(r.job, null, "Test finished. Did you hear it?", "The test failed. The log above shows why."));
+      }, "sec"));
     const mine = devs.filter(d => d.paired), nearby = devs.filter(d => !d.paired);
     if (mine.length) lists.append(h("div", { class: "group-title" }, "My speakers"), ...mine.map(device));
     if (nearby.length && cur) lists.append(h("details", { class: "more" }, h("summary", {}, "Other nearby devices (" + nearby.length + ")"), ...nearby.map(device)));

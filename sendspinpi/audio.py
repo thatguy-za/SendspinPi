@@ -102,7 +102,9 @@ def test_tone_steps(device):
     cmd = ["speaker-test", "-t", "sine", "-f", "440", "-c", "2", "-l", "1"]
     if device:
         cmd += ["-D", device]
-    steps.append(["timeout", "8"] + cmd)
+    # Run as the same user as the player so the test reflects what the player can do
+    # (permissions on the sound card / Bluetooth service differ from root's).
+    steps.append(["runuser", "-u", sendspin_ctl.SENDSPIN_USER, "--", "timeout", "8"] + cmd)
     if state == "active":
         steps.append(["systemctl", "start", sendspin_ctl.SERVICE])
     return steps
