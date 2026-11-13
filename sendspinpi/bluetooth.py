@@ -66,7 +66,7 @@ def info(mac):
                  or "0000110b" in out.lower())
     return {"mac": mac, "name": name.group(1).strip() if name else mac, "paired": flag("Paired"),
             "trusted": flag("Trusted"), "connected": flag("Connected"), "audio": audio,
-            "known_type": bool(icon)}
+            "known_type": bool(icon), "seen": bool(re.search(r"^\s*RSSI:", out, re.M))}
 
 
 def _conf_mac():
@@ -214,11 +214,30 @@ def forget(mac):
     return rc == 0, (out + err).strip()
 
 
+def auto_repair(mac):
+    """The Pi lost its pairing with the chosen speaker (e.g. the speaker forgot it).
+    If the speaker is nearby and willing, pair again without user action.
+    Only ever touches the speaker the user selected. Returns True when paired."""
+    ensure_powered()
+    _ctl("--timeout", "8", "scan", "on", timeout=20)
+    d = info(mac)
+    if not d or not d["seen"]:
+        return False  # not in range / not in pairing mode
+    run(["bluetoothctl", "--agent", "NoInputNoOutput", "pair", mac], timeout=60)
+    d = info(mac)
+    if not d or not d["paired"]:
+        return False
+    _ctl("trust", mac)
+    _ctl("connect", mac, timeout=40)
+    return True
+
+
 def watchdog_loop():
     """Keep the selected speaker connected; restart the player when it (re)appears."""
     time.sleep(45)
     last = None
     attempt = 0.0
+    repair_at = 0.0
     while True:
         try:
             mac = selected_mac()
@@ -228,6 +247,11 @@ def watchdog_loop():
                 d = info(mac)
                 connected = bool(d and d["connected"])
                 auto = config.load()["bluetooth_auto_reconnect"]
+                if auto and not (d and d["paired"]) and time.time() - repair_at > 60:
+                    repair_at = time.time()
+                    auto_repair(mac)
+                    d = info(mac)
+                    connected = bool(d and d["connected"])
                 if auto and not connected and time.time() - attempt > 30 and d and d["paired"]:
                     attempt = time.time()
                     ensure_powered()

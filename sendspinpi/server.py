@@ -181,9 +181,13 @@ def setup_complete(h, q, body):
 def audio_info(h, q, body):
     res = audio.cards()
     res.update(overlays=audio.OVERLAYS, overlay=audio.current_overlay(),
-               selected=sendspin_ctl.read_settings().get("audio_device", ""),
-               sendspin_devices=audio.sendspin_devices() if q.get("raw") else None)
+               selected=sendspin_ctl.read_settings().get("audio_device", ""))
     return res
+
+
+@route("GET", "/api/audio/devices")
+def audio_devices(h, q, body):
+    return {"text": audio.sendspin_devices()}
 
 
 @route("POST", "/api/audio/overlay")

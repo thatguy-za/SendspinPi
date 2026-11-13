@@ -5,7 +5,7 @@ import shutil
 import threading
 import time
 
-from .util import run
+from .util import cached, run
 
 APT_ENV = {"DEBIAN_FRONTEND": "noninteractive", "NEEDRESTART_MODE": "a"}
 LOCK = ["-o", "DPkg::Lock::Timeout=180"]
@@ -52,14 +52,19 @@ def apt_update_steps():
     return [["apt-get", "update"] + LOCK]
 
 
-def upgradable():
-    rc, out, err = run(["apt", "list", "--upgradable"])
+def _upgradable():
+    rc, out, err = run(["apt", "list", "--upgradable"], timeout=60)
     pk = []
     for line in out.splitlines():
         m = re.match(r"(\S+?)/(\S+) (\S+) (\S+) \[upgradable from: (\S+)\]", line)
         if m:
             pk.append({"name": m.group(1), "new": m.group(3), "old": m.group(5)})
     return pk
+
+
+def upgradable():
+    # slow (apt); remembered until a job (apt update/upgrade) finishes
+    return cached("apt_upgradable", 900, _upgradable)
 
 
 def apt_upgrade_steps():

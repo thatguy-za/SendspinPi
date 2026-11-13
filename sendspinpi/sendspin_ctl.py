@@ -5,7 +5,7 @@ import re
 import shutil
 import urllib.request
 
-from .util import run
+from .util import cached, run
 
 SERVICE = "sendspin"
 BASE = os.environ.get("SENDSPINPI_BASE", "/opt/sendspinpi")
@@ -26,7 +26,7 @@ UV_ENV = {
 ACTIONS = {"start", "stop", "restart", "enable", "disable"}
 
 
-def installed_version():
+def _installed_version():
     rc, out, _ = run([UV, "tool", "list"], env=UV_ENV)
     if rc != 0:
         return None
@@ -34,12 +34,21 @@ def installed_version():
     return m.group(1) if m else None
 
 
-def latest_version():
+def installed_version():
+    # `uv tool list` is slow on a Pi Zero; remembered until a job finishes (installs/updates)
+    return cached("sendspin_installed", 600, _installed_version, fail_ttl=15)
+
+
+def _latest_version():
     try:
         with urllib.request.urlopen("https://pypi.org/pypi/sendspin/json", timeout=8) as r:
             return json.load(r)["info"]["version"]
     except Exception:  # noqa: BLE001
         return None
+
+
+def latest_version():
+    return cached("sendspin_latest", 1800, _latest_version, fail_ttl=120)
 
 
 def install_steps():
@@ -51,9 +60,11 @@ def upgrade_steps():
 
 
 def service_state():
-    _, active, _ = run(["systemctl", "is-active", SERVICE])
-    _, enabled, _ = run(["systemctl", "is-enabled", SERVICE])
-    return {"active": active.strip() or "unknown", "enabled": enabled.strip() or "unknown"}
+    # one systemctl call instead of two
+    _, out, _ = run(["systemctl", "show", SERVICE, "-p", "ActiveState", "-p", "UnitFileState"])
+    kv = dict(l.split("=", 1) for l in out.splitlines() if "=" in l)
+    return {"active": kv.get("ActiveState") or "unknown",
+            "enabled": kv.get("UnitFileState") or "unknown"}
 
 
 def service_action(action):

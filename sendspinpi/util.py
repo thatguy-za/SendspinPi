@@ -20,6 +20,25 @@ def run(args, timeout=30, env=None):
     return p.returncode, p.stdout, p.stderr
 
 
+# ---------------------------------------------------------------- cache
+_cache = {}
+
+
+def cached(key, ttl, fn, fail_ttl=None):
+    """Return fn()'s result, remembered for ttl seconds (fail_ttl if the result is falsy)."""
+    now = time.time()
+    hit = _cache.get(key)
+    if hit and now < hit[0]:
+        return hit[1]
+    val = fn()
+    _cache[key] = (now + (ttl if val or fail_ttl is None else fail_ttl), val)
+    return val
+
+
+def cache_clear():
+    _cache.clear()
+
+
 # ---------------------------------------------------------------- jobs
 class Busy(Exception):
     pass
@@ -79,6 +98,8 @@ def _run_job(job, steps, env):
     except Exception as exc:  # noqa: BLE001
         _log(job, "error: %s" % exc)
         job["status"] = "failed"
+    finally:
+        cache_clear()
 
 
 def job_state(jid, since=0):

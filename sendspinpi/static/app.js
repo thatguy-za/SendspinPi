@@ -62,6 +62,16 @@ function jobView(jobId, onDone, okText, failText) {
   return h("div", {}, pre, status);
 }
 
+// A card that appears immediately with "Loading…" and is swapped for the real one when its data
+// arrives. Optional cards simply disappear if they can't be loaded.
+function lazyCard(title, load, build, optional) {
+  const msg = h("p", { class: "mut" }, "Loading…");
+  const slot = h("div", { class: "card" }, title ? h("h2", {}, title) : null, msg);
+  load().then(data => { const el = build(data); if (el) slot.replaceWith(el); else slot.remove(); })
+    .catch(e => { if (optional) slot.remove(); else { msg.className = "err"; msg.textContent = e.message; } });
+  return slot;
+}
+
 // ---------- state / routing
 const state = { me: null, status: null, tab: "wizard", wiz: 0, cache: {} };
 const TABS = [["wizard", "Setup"], ["sendspin", "Sendspin"], ["audio", "Audio"], ["bluetooth", "Bluetooth"], ["wifi", "WiFi"], ["system", "System"], ["power", "Power"], ["account", "Account"]];
@@ -178,7 +188,7 @@ async function wizard(main) {
         if (!b.available) panel.append(h("p", { class: "err" }, b.error || "Bluetooth is not available on this Pi."));
         else {
           btInUse = !!b.selected; btDevice = b.selected ? "sendspin_bt" : "";
-          panel.append(btPanel(b, () => render()));
+          panel.append(btPanel(b, () => render(), { banner: true }));
         }
       }
       body.append(h("p", {}, "Where should the sound come out?"), seg, panel,
@@ -236,46 +246,54 @@ async function outputLabel() {
 }
 
 // Bluetooth device list used by both the Bluetooth tab and the setup wizard.
-function btPanel(b, onChange) {
-  const wrap = h("div", {}), lists = h("div", {}), log = h("div", {});
+// "My speakers" holds paired/selected speakers with their actions; "Add a speaker" scans for new ones.
+function btPanel(b, onChange, opts) {
+  opts = opts || {};
+  const wrap = h("div", { class: "btpanel" }), mineBox = h("div", {}), nearList = h("div", {}), log = h("div", {});
   const post = (path, mac, extra) => api("/api/bluetooth/" + path, Object.assign({ mac }, extra));
+  const link = (label, fn, cls) => { const l = h("button", { class: "link " + (cls || "") }, label); l.addEventListener("click", fn); return l; };
   const device = d => {
-    const tag = d.in_use ? h("span", { class: "tag ok" }, "Sendspin output")
+    const lost = d.in_use && !d.paired;   // selected as output, but the pairing is gone
+    const tag = lost ? h("span", { class: "tag warn" }, "needs pairing")
+      : d.in_use ? h("span", { class: "tag ok" }, "Sendspin output")
       : d.connected ? h("span", { class: "tag ok" }, "connected")
       : d.paired ? h("span", { class: "tag" }, "not connected") : null;
     const acts = h("div", { class: "dev-actions" });
-    if (!d.paired) acts.append(btn("Pair", async () => {
+    if (!d.paired) acts.append(btn(lost ? "Pair again" : "Pair", async () => {
       log.textContent = ""; const r = await post("pair", d.mac);
       log.append(jobView(r.job, () => setTimeout(onChange, 1200), "Paired and connected.", "Pairing failed. Put the speaker in pairing mode and try again."));
     }));
     else {
-      if (d.in_use) acts.append(btn("Stop using", async () => { await post("use", ""); onChange(); }, "sec"));
+      if (d.in_use) acts.append(btn("Play test tone", async () => {
+        log.textContent = ""; const r = await api("/api/audio/test", { device: "sendspin_bt" });
+        log.append(jobView(r.job, null, "Test finished. Did you hear it?", "The test failed. The log above shows why."));
+      }, "sec"));
       else if (d.connected) acts.append(btn("Use for Sendspin", async () => { await post("use", d.mac); onChange(); }));
       if (d.connected) acts.append(btn("Disconnect", async () => { await post("disconnect", d.mac); onChange(); }, "sec"));
       else acts.append(btn("Connect", async () => { await post("connect", d.mac); onChange(); }));
-      const forget = h("button", { class: "link bad" }, "Forget");
-      forget.addEventListener("click", async () => { if (confirm("Forget " + d.name + "?")) { await post("forget", d.mac); onChange(); } });
-      acts.append(forget);
     }
+    const links = h("span", { class: "dev-links" });
+    if (d.in_use) links.append(link("Stop using", async () => { await post("use", ""); onChange(); }));
+    if (d.paired) links.append(link("Forget", async () => { if (confirm("Forget " + d.name + "?")) { await post("forget", d.mac); onChange(); } }, "bad"));
+    if (links.children.length) acts.append(links);
     return h("div", { class: "dev-row" },
       h("div", { class: "dev-head" }, h("div", {}, h("b", {}, d.name), h("small", {}, d.mac)), tag), acts);
   };
   const paint = devs => {
-    lists.textContent = "";
+    mineBox.textContent = nearList.textContent = "";
     const cur = devs.find(d => d.in_use);
-    if (cur) lists.append(h("div", { class: "flash" }, cur.name + " is set as your Sendspin output."),
-      btn("Play test tone", async () => {
-        log.textContent = ""; const r = await api("/api/audio/test", { device: "sendspin_bt" });
-        log.append(jobView(r.job, null, "Test finished. Did you hear it?", "The test failed. The log above shows why."));
-      }, "sec"));
-    const mine = devs.filter(d => d.paired), nearby = devs.filter(d => !d.paired);
-    if (mine.length) lists.append(h("div", { class: "group-title" }, "My speakers"), ...mine.map(device));
-    if (nearby.length && cur) lists.append(h("details", { class: "more" }, h("summary", {}, "Other nearby devices (" + nearby.length + ")"), ...nearby.map(device)));
-    else if (nearby.length) lists.append(h("div", { class: "group-title" }, "Nearby"), ...nearby.map(device));
-    if (!devs.length) lists.append(h("p", {}, "No speakers found yet. Put your speaker in pairing mode, then press Scan."));
+    const mine = devs.filter(d => d.paired || d.in_use), nearby = devs.filter(d => !d.paired && !d.in_use);
+    if (mine.length) mineBox.append(...[h("div", { class: "group-title" }, "My speakers"),
+      cur && cur.paired && opts.banner ? h("div", { class: "flash" }, cur.name + " is set as your Sendspin output.") : null,
+      devs.some(d => d.in_use && !d.paired) ? h("div", { class: "callout" }, "The Pi has forgotten this speaker. It pairs again automatically when the speaker is switched on and nearby, or put it in pairing mode and press Pair again.") : null,
+      ...mine.map(device)].filter(Boolean));
+    nearList.append(...(nearby.length ? nearby.map(device)
+      : [h("p", { class: "mut" }, "Switch your speaker to pairing mode, then press Scan.")]));
   };
   paint(b.devices);
-  wrap.append(btn("Scan", async () => { lists.textContent = "Scanning for 8 seconds…"; const r = await api("/api/bluetooth/scan", {}); paint(r.devices); }, "sec"), log, lists);
+  wrap.append(mineBox, h("div", { class: "group-title" }, "Add a speaker"),
+    btn("Scan", async () => { nearList.textContent = "Scanning for 8 seconds…"; const r = await api("/api/bluetooth/scan", {}); paint(r.devices); }, "sec"),
+    nearList, log);
   return wrap;
 }
 
@@ -310,19 +328,25 @@ const views = {
   async sendspin(main) {
     const s = state.status, sp = s.sendspin;
     const out = h("div", {});
-    const v = await api("/api/sendspin/versions").catch(() => ({}));
     const log = h("div", {});
     const act = (fn, done) => async () => { log.textContent = ""; const r = await fn(); log.append(jobView(r.job, st => { if (st === "ok") { state.flash = done; boot_keep(); } }, done, "Failed. See the log above.")); };
     if (state.flash) { main.append(h("div", { class: "flash" }, state.flash)); state.flash = null; }
+    const latest = h("span", {}, "checking…");
+    const upBtn = !sp.installed ? btn("Install", act(() => api("/api/sendspin/install", {}), "Install complete. Sendspin is ready to use."))
+      : btn("Update", act(() => api("/api/sendspin/upgrade", {}), "Update complete."));
+    // the PyPI lookup is slow; fill it in when it arrives
+    api("/api/sendspin/versions").then(v => {
+      latest.textContent = v.latest ? "v" + v.latest : "unknown (offline?)";
+      if (sp.installed) upBtn.textContent = v.latest && v.latest !== sp.installed ? "Update to v" + v.latest : "Reinstall latest";
+    }).catch(() => { latest.textContent = "unknown"; });
     main.append(h("div", { class: "card" },
       h("div", { class: "row" }, "Installed version", h("span", { class: "tag " + (sp.installed ? "ok" : "bad") }, sp.installed ? "v" + sp.installed : "not installed")),
-      h("div", { class: "row" }, "Latest on PyPI", h("span", {}, v.latest ? "v" + v.latest : "unknown (offline?)")),
+      h("div", { class: "row" }, "Latest on PyPI", latest),
       h("div", { class: "row" }, "Player service", h("span", { class: "tag " + (sp.service.active === "active" ? "ok" : "warn") }, sp.service.active + " / " + sp.service.enabled)),
       h("div", { class: "row" }, "Player name", h("span", {}, sp.settings.name || "(hostname)")),
       h("div", { class: "row" }, "Audio device", h("span", {}, sp.settings.audio_device || "default")),
       h("div", { style: "margin-top:10px" },
-        !sp.installed ? btn("Install", act(() => api("/api/sendspin/install", {}), "Install complete. Sendspin is ready to use.")) :
-          btn(v.latest && v.latest !== sp.installed ? "Update to v" + v.latest : "Reinstall latest", act(() => api("/api/sendspin/upgrade", {}), "Update complete.")),
+        upBtn,
         btn("Start", () => svc("enable"), "sec"), btn("Stop", () => svc("stop"), "sec"), btn("Restart", () => svc("restart"), "sec")),
       log),
       h("div", { class: "card" }, h("h2", {}, "Logs"), out, btn("Refresh", () => loadLogs(out), "sec"),
@@ -331,8 +355,10 @@ const views = {
     loadLogs(out);
   },
   async audio(main) {
-    const a = await api("/api/audio?raw=1");
+    const a = await api("/api/audio");
     let sel = a.selected;
+    const raw = h("pre", {}, "Loading…");
+    api("/api/audio/devices").then(r => { raw.textContent = r.text || "(none)"; }).catch(e => { raw.textContent = e.message; });
     const log = h("div", {});
     main.append(h("div", { class: "card" }, h("h2", {}, "Audio output"), overlayPicker(a, () => render()),
       h("h3", {}, "Output device"), deviceList(a, v => { sel = v; }, a.selected),
@@ -340,26 +366,28 @@ const views = {
       (() => { const i = h("input", { placeholder: "e.g. plughw:CARD=Device,DEV=0" }); i.addEventListener("input", () => { if (i.value) sel = i.value.trim(); }); return i; })(),
       btn("Save", async () => { const r = await api("/api/sendspin/config", { audio_device: sel }); alert("Saved" + (r.restarted ? " and player restarted" : "")); }),
       btn("Play test tone", async () => { log.textContent = ""; const r = await api("/api/audio/test", { device: sel }); log.append(jobView(r.job)); }, "sec"), log),
-      h("div", { class: "card" }, h("h2", {}, "Devices as Sendspin sees them"), h("pre", {}, a.sendspin_devices || "(none)")));
+      h("div", { class: "card" }, h("h2", {}, "Devices as Sendspin sees them"), raw));
   },
   async bluetooth(main) {
-    const b = await api("/api/bluetooth");
-    const card = h("div", { class: "card" });
+    const card = h("div", { class: "card" }, h("p", { class: "mut" }, "Looking for speakers…"));
     main.append(card);
+    const b = await api("/api/bluetooth");
+    card.textContent = "";
     if (!b.available) return card.append(h("p", { class: "err" }, b.error || "Bluetooth is not available."));
     const auto = h("input", { type: "checkbox", class: "switch", role: "switch", "aria-label": "Reconnect automatically", checked: b.auto_reconnect });
     auto.addEventListener("change", () => api("/api/bluetooth/auto", { enabled: auto.checked }).catch(e => { alert(e.message); auto.checked = !auto.checked; }));
     card.append(
-      h("p", {}, "Play Sendspin through a Bluetooth speaker or headphones. Volume changes from your Sendspin server then control the speaker's volume."),
+      h("p", {}, "Play Sendspin through a Bluetooth speaker. Volume changes from your Sendspin server control the speaker's volume."),
       btPanel(b, () => render()),
       h("div", { class: "divider" }, h("label", { class: "switch-row" },
         h("span", {}, h("b", {}, "Reconnect automatically"), h("small", {}, "If the speaker disconnects, the Pi keeps trying to reconnect it.")), auto)),
       h("p", { class: "note" }, "On a Pi Zero 2 W, Bluetooth and WiFi share one antenna. If audio stutters, move the Pi closer to the speaker or use ethernet."));
   },
   async wifi(main) {
-    const w = await api("/api/wifi");
-    const card = h("div", { class: "card" });
+    const card = h("div", { class: "card" }, h("p", { class: "mut" }, "Checking the network…"));
     main.append(card);
+    const w = await api("/api/wifi");
+    card.textContent = "";
     if (!w.available) return card.append(h("p", { class: "err" }, "No WiFi interface found (NetworkManager required)."));
     card.append(h("div", { class: "row" }, "Current", h("span", {}, w.hotspot ? "Setup hotspot “" + w.hotspot_ssid + "” active (" + "10.42.0.1)" : (w.current_ssid || "not connected via WiFi"))));
     w.connections.forEach(c => card.append(h("div", { class: "row" }, c.name + " (" + (c.type === "802-3-ethernet" ? "ethernet" : "wifi") + ")", h("span", { class: "mut" }, c.ip || ""))));
@@ -390,31 +418,39 @@ const views = {
     scan();
   },
   async system(main) {
-    const s = (await api("/api/status")), sys = s.system;
-    const up = await api("/api/system/upgradable");
-    const au = await api("/api/updates").catch(() => null);
-    const su = await api("/api/selfupdate").catch(() => null);
+    // start every request now, in parallel; only the quick one blocks the page
+    const upP = api("/api/system/upgradable"), auP = api("/api/updates"), suP = api("/api/selfupdate");
+    const sys = (await api("/api/status")).system;
     const log = h("div", {});
     const grid = h("div", { class: "grid" }, [["OS", sys.os], ["Model", sys.model], ["Uptime", uptime(sys.uptime_s)],
       ["Memory free", sys.mem_avail_kb ? bytes(sys.mem_avail_kb * 1024) : "?"],
       ["Disk free", sys.disk ? bytes(sys.disk.free) : "?"], ["CPU temp", sys.cpu_temp_c != null ? sys.cpu_temp_c + " °C" : "?"], ["IP", sys.ips.join(", ")]]
       .map(([k, v]) => h("div", {}, h("small", {}, k), v)));
-    const n = up.packages.length;
+    // System updates card: buttons are there at once, the package status and automatic-update section fill in later
+    const statusSlot = h("div", {}, h("p", { class: "mut" }, "Checking for updates…"));
+    const updateNow = btn("Update now", async () => {
+      if (!confirm("Install all updates now? Keep power connected; this can take a long time on a Pi Zero.")) return;
+      log.textContent = ""; const r = await api("/api/system/apt-upgrade", {}); log.append(jobView(r.job, () => setTimeout(() => render(), 1500)));
+    });
+    updateNow.hidden = true;
+    upP.then(up => {
+      const n = up.packages.length;
+      statusSlot.textContent = "";
+      statusSlot.append(h("div", { class: "row" }, h("span", {}, n ? n + " update" + (n > 1 ? "s" : "") + " available" : "Everything is up to date"),
+        h("span", { class: "tag " + (n ? "warn" : "ok") }, n ? "available" : "up to date")),
+        n ? h("details", { class: "more" }, h("summary", {}, "View packages"), h("pre", {}, up.packages.map(p => p.name + "  " + p.old + " → " + p.new).join("\n"))) : null);
+      updateNow.hidden = !n;
+    }).catch(e => { statusSlot.textContent = e.message; });
+    const autoSlot = h("div", { class: "divider" }, h("p", { class: "mut" }, "Loading automatic updates…"));
+    auP.then(au => { autoSlot.textContent = ""; autoSlot.append(autoUpdatesSection(au)); }).catch(() => autoSlot.remove());
     main.append(h("div", { class: "card" }, grid,
       sys.reboot_required ? h("div", { class: "callout" }, "A restart is needed to finish updates. Use the Power tab when you're ready.") : null),
-      su ? selfUpdateCard(su) : null,
-      h("div", { class: "card" }, h("h2", {}, "System updates"),
-        h("div", { class: "row" }, h("span", {}, n ? n + " update" + (n > 1 ? "s" : "") + " available" : "Everything is up to date"),
-          h("span", { class: "tag " + (n ? "warn" : "ok") }, n ? "available" : "up to date")),
-        n ? h("details", { class: "more" }, h("summary", {}, "View packages"), h("pre", {}, up.packages.map(p => p.name + "  " + p.old + " → " + p.new).join("\n"))) : null,
+      lazyCard("SendspinPi updates", () => suP, selfUpdateCard, true),
+      h("div", { class: "card" }, h("h2", {}, "System updates"), statusSlot,
         h("div", { style: "margin-top:8px" },
           btn("Check for updates", async () => { log.textContent = ""; const r = await api("/api/system/apt-update", {}); log.append(jobView(r.job, () => setTimeout(() => render(), 1500))); }, "sec"),
-          n ? btn("Update now", async () => {
-            if (!confirm("Install all updates now? Keep power connected; this can take a long time on a Pi Zero.")) return;
-            log.textContent = ""; const r = await api("/api/system/apt-upgrade", {}); log.append(jobView(r.job, () => setTimeout(() => render(), 1500)));
-          }) : null),
-        log,
-        au ? h("div", { class: "divider" }, autoUpdatesSection(au)) : null));
+          updateNow),
+        log, autoSlot));
   },
   power(main) {
     main.append(h("div", { class: "card" }, h("p", {}, "Shutting down needs physical access to power the Pi back on."),

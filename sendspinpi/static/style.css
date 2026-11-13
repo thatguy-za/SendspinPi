@@ -243,3 +243,10 @@ button.link:hover{text-decoration:underline}
 .seg{display:flex;gap:4px;padding:3px;margin:8px 0 14px;border:1px solid var(--line);border-radius:10px}
 .seg button{flex:1;min-height:40px;background:none;border:0;border-radius:8px;color:var(--mut);font:inherit;font-weight:550;cursor:pointer}
 .seg button.on{background:var(--sunk);color:var(--fg)}
+
+/* bluetooth panel layout */
+.btpanel .group-title{margin:20px 0 6px}
+.btpanel>div:first-child>.group-title:first-child{margin-top:4px}
+.btpanel .dev-row:first-of-type{border-top:0}
+.dev-links{margin-left:auto;display:flex;gap:6px}
+[hidden]{display:none !important}

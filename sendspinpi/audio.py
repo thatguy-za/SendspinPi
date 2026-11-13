@@ -3,7 +3,7 @@ import os
 import re
 
 from . import sendspin_ctl
-from .util import run
+from .util import cached, run
 
 # Overlays for common I2S DAC HATs (name -> label).
 OVERLAYS = {
@@ -77,7 +77,7 @@ def cards():
     return {"cards": res, "error": err.strip() if rc != 0 else None}
 
 
-def sendspin_devices():
+def _sendspin_devices():
     if not os.path.exists(sendspin_ctl.BIN):
         return "sendspin is not installed yet."
     rc, out, err = run(["runuser", "-u", sendspin_ctl.SENDSPIN_USER, "--",
@@ -87,6 +87,11 @@ def sendspin_devices():
 
 
 _DEVICE_RE = re.compile(r"^[A-Za-z0-9_:=,.\-]{1,80}$")
+
+
+def sendspin_devices():
+    # starts a Python process (slow on a Pi Zero); remembered briefly and cleared by any job
+    return cached("sendspin_devices", 120, _sendspin_devices)
 
 
 def valid_device(dev):
