@@ -53,7 +53,15 @@ class BluetoothVolumeController:
         self._prev = None
         self._task = None
         self._quiet_until = 0.0   # ignore speaker-side changes while/just after we set the volume
+        self._level = self._initial_level()
         LOG.info("Two-way Bluetooth volume is on")
+
+    def _initial_level(self):
+        try:
+            with open(VOLFILE) as f:
+                return max(0, min(100, int(f.read().strip())))
+        except (OSError, ValueError):
+            return max(0, min(100, self._settings.player_volume))
 
     # ---- BlueALSA helpers
     async def _run(self, *args):
@@ -92,35 +100,41 @@ class BluetoothVolumeController:
             await self._run("soft-volume", pcm, "off")
             self._native_pcm = pcm
 
+    async def _apply(self, pcm, pct):
+        """Send a level to the speaker. BlueALSA's own idea of the speaker's volume is only a guess
+        until something has been sent, so never trust a read before this has happened."""
+        self._quiet_until = time.monotonic() + 4
+        await self._native(pcm)
+        await self._run("volume", pcm, str(_raw(pct)))
+        # the speaker rounds to its own steps; remember where it settled so that
+        # is not mistaken for someone pressing the speaker's buttons
+        await asyncio.sleep(0.4)
+        raw = await self._read_raw(pcm)
+        if raw is not None:
+            self._prev = raw
+        self._quiet_until = time.monotonic() + 1.5
+
     # ---- the Sendspin volume controller interface
     async def set_state(self, volume, *, muted):
         if not 0 <= volume <= 100:
             raise ValueError("Volume must be 0-100, got %s" % volume)
         effective = 0 if muted else volume
-        self._quiet_until = time.monotonic() + 4
         pcm = await self._pcm()
         if pcm is None:
             LOG.warning("Bluetooth speaker not connected: volume %d%% not applied", effective)
         else:
-            await self._native(pcm)
-            await self._run("volume", pcm, str(_raw(effective)))
-            # the speaker rounds to its own steps; remember where it settled so that
-            # is not mistaken for someone pressing the speaker's buttons
-            await asyncio.sleep(0.4)
-            raw = await self._read_raw(pcm)
-            if raw is not None:
-                self._prev = raw
-        self._quiet_until = time.monotonic() + 1.5
+            await self._apply(pcm, effective)
+        self._level = volume
         self._settings.update(player_volume=volume, player_muted=muted)
         _write_volfile(effective)
 
     async def get_state(self):
+        """The player starts with its saved level, and the speaker is made to match it."""
+        muted = bool(self._settings.player_muted)
         pcm = await self._pcm()
-        raw = await self._read_raw(pcm) if pcm else None
-        if raw is not None:
-            self._prev = raw
-            return _pct(raw), False
-        return max(0, min(100, self._settings.player_volume)), bool(self._settings.player_muted)
+        if pcm is not None:
+            await self._apply(pcm, 0 if muted else self._level)
+        return self._level, muted
 
     async def start_monitoring(self, callback):
         if self._task is None:
@@ -148,13 +162,17 @@ class BluetoothVolumeController:
                 raw = await self._read_raw(pcm)
                 if raw is None:
                     continue
-                if self._prev is None or time.monotonic() < self._quiet_until:
+                if self._prev is None:   # the speaker just (re)connected: make it match the slider
+                    await self._apply(pcm, 0 if self._settings.player_muted else self._level)
+                    continue
+                if time.monotonic() < self._quiet_until:
                     self._prev = raw
                     continue
                 if raw != self._prev:
                     self._prev = raw
                     pct = _pct(raw)
                     LOG.info("Speaker volume changed to %d%%", pct)
+                    self._level = pct
                     self._settings.update(player_volume=pct, player_muted=False)
                     _write_volfile(pct)
                     callback(pct, False)
