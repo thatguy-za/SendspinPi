@@ -126,19 +126,39 @@ def scan(seconds=8):
     return devices()
 
 
-def _pair_permanently(mac, log):
+def _wait_for_speaker(mac, log, seconds):
+    """Scan in 8 second windows until the speaker is visible (i.e. in pairing mode)."""
+    deadline = time.time() + seconds
+    first = True
+    while True:
+        _ctl("--timeout", "8", "scan", "on", timeout=20)
+        d = info(mac)
+        if d and (d["seen"] or d["paired"]):   # speakers in pairing mode often pair on their own
+            return True
+        if time.time() >= deadline:
+            return False
+        if first:
+            log("Now put the speaker in pairing mode (usually hold its Bluetooth button until it flashes). Waiting up to %d seconds…" % seconds)
+            first = False
+        else:
+            log("Still waiting for the speaker…")
+
+
+def _pair_permanently(mac, log, wait=60):
     """Pair with the speaker so the link key is saved (Bonded: yes). A pairing that exists but isn't
     bonded is thrown away and redone. Raises RuntimeError with a user-friendly message on failure."""
     ensure_powered()
     d = info(mac)
     if d and d["paired"] and not d["bonded"]:
-        log("This pairing is only temporary and would be lost on restart. Pairing again…")
+        log("This pairing is only temporary and would be lost on restart. Removing it and pairing again…")
         _ctl("remove", mac)
         d = None
     if not d or not d["paired"]:
         if not d or not d["seen"]:
-            log("Looking for the speaker (keep it in pairing mode)…")
-            _ctl("--timeout", "8", "scan", "on", timeout=20)
+            if not _wait_for_speaker(mac, log, wait):
+                raise RuntimeError("The speaker didn't show up. Put it in pairing mode and try again.")
+            d = info(mac)
+    if not d or not d["paired"]:
         log("Pairing with %s…" % mac)
         rc, out, err = run(["bluetoothctl", "--agent", "NoInputNoOutput", "pair", mac], timeout=60)
         log((out + err).strip())
@@ -147,10 +167,9 @@ def _pair_permanently(mac, log):
             raise RuntimeError("Pairing failed. Put the speaker in pairing mode and try again.")
     log("Trusting (so it reconnects automatically)…")
     _ctl("trust", mac)
-    if not d["bonded"]:
-        d = info(mac)
-        if d and not d["bonded"]:
-            log("Warning: the pairing was not saved permanently, so it may need repeating after a restart.")
+    d = info(mac)
+    if d and not d["bonded"]:
+        log("Warning: the pairing was not saved permanently, so it may need repeating after a restart.")
 
 
 def pair_steps(mac):
@@ -251,7 +270,7 @@ def auto_repair(mac):
     if not d or not d["seen"]:
         return False  # not in range / not in pairing mode
     try:
-        _pair_permanently(mac, lambda *_: None)
+        _pair_permanently(mac, lambda *_: None, wait=0)
     except RuntimeError:
         return False
     _ctl("connect", mac, timeout=40)

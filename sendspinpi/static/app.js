@@ -281,7 +281,7 @@ function btPanel(b, onChange, opts) {
     if (links.children.length) acts.append(links);
     return h("div", { class: "dev-row" },
       h("div", { class: "dev-head" }, h("div", {}, h("b", {}, d.name), h("small", {}, d.mac)), tag),
-      temp ? h("div", { class: "callout" }, "This pairing is temporary and will be lost when the Pi restarts. Put the speaker in pairing mode and press Make permanent.") : null,
+      temp ? h("div", { class: "callout" }, "This pairing is temporary and will be lost when the Pi restarts. Press Make permanent, then put the speaker in pairing mode when the log asks you to.") : null,
       acts);
   };
   const paint = (devs, scanned) => {
