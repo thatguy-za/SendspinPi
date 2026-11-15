@@ -1,14 +1,17 @@
 """Automatic (unattended) OS updates via the unattended-upgrades package."""
 import os
 import re
+import threading
+import time
 
-from . import config
+from . import config, sendspin_ctl, system, util
 from .util import run
 
 APT_CONF = os.environ.get("SENDSPINPI_APT_CONF", "/etc/apt/apt.conf.d/99sendspinpi-unattended")
 LOG = "/var/log/unattended-upgrades/unattended-upgrades.log"
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
+SCOPES = ("security", "sendspin", "all")
 SECURITY = [
     "origin=Debian,codename=${distro_codename}-security,label=Debian-Security",
 ]
@@ -69,6 +72,7 @@ def status():
 
 
 def _render(enabled, scope, reboot, reboot_time):
+    # "sendspin" means security fixes for the OS plus Sendspin itself; "all" is everything
     patterns = EVERYTHING if scope == "all" else SECURITY
     lines = [
         "// Managed by SendspinPi - changes here are overwritten.",
@@ -90,7 +94,7 @@ def _render(enabled, scope, reboot, reboot_time):
 
 def apply(enabled, scope, reboot, reboot_time):
     """Returns an error string or None."""
-    if scope not in ("security", "all"):
+    if scope not in SCOPES:
         return "Invalid update type"
     if not TIME_RE.match(reboot_time):
         return "Invalid restart time"
@@ -105,5 +109,34 @@ def apply(enabled, scope, reboot, reboot_time):
     return None
 
 
-def run_now_steps():
-    return [["unattended-upgrade", "-v"]]
+def wants_sendspin():
+    return _settings()["scope"] in ("sendspin", "all")
+
+
+def sendspin_update_due():
+    """True if Sendspin updates are part of the chosen scope and a newer version exists."""
+    if not wants_sendspin():
+        return False
+    cur, new = sendspin_ctl.installed_version(), sendspin_ctl.latest_version()
+    return bool(cur and new and cur != new)
+
+
+def run_now():
+    """Steps and environment for "Check and install now": OS updates, plus Sendspin if due."""
+    steps, env = [["unattended-upgrade", "-v"]], dict(system.APT_ENV)
+    if sendspin_update_due():
+        steps += sendspin_ctl.upgrade_steps()
+        env.update(sendspin_ctl.UV_ENV)
+    return steps, env
+
+
+def sendspin_loop():
+    """Install new Sendspin releases (checked every 6 hours) when the update scope includes it."""
+    time.sleep(900)
+    while True:
+        try:
+            if _effective_enabled() and sendspin_update_due() and not util.active_job():
+                util.start_job("Upgrade Sendspin", sendspin_ctl.upgrade_steps(), sendspin_ctl.UV_ENV)
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(6 * 3600)

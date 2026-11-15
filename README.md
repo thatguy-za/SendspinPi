@@ -78,7 +78,7 @@ Audio uses [BlueALSA](https://github.com/arkq/bluez-alsa), which is much lighter
 
 ### Automatic updates
 
-In **System → Automatic updates**, switch on "Install updates automatically" and the Pi checks once a day and installs updates in the background (using Debian's `unattended-upgrades`). Choose **Security fixes only** (safest) or **All updates** (also bug fixes and Raspberry Pi updates). You can optionally let the Pi restart itself at a set time when an update needs it. Music stops for about a minute. If you leave that off, the System page shows a reminder when a restart is needed. **Check and install now** runs it straight away, and **Show details** shows the log.
+In **System → Automatic updates**, switch on "Install updates automatically" and the Pi checks once a day and installs updates in the background (using Debian's `unattended-upgrades`). Choose **Security fixes only** (safest), **Security fixes and Sendspin** (also installs new Sendspin releases, checked every few hours; the player restarts briefly), or **Everything** (also bug fixes and Raspberry Pi updates). You can optionally let the Pi restart itself at a set time when an update needs it. Music stops for about a minute. If you leave that off, the System page shows a reminder when a restart is needed. **Check and install now** runs it straight away, and **Show details** shows the log.
 
 ### SendspinPi updates
 

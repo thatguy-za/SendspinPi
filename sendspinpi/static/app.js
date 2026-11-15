@@ -690,7 +690,8 @@ function autoUpdatesSection(u) {
     opts.append(
       h("div", { class: "group" }, h("div", { class: "group-title" }, "Which updates"),
         choice("radio", "scope", u.scope === "security", "Security fixes only", "Safest choice", () => save({ scope: "security" })),
-        choice("radio", "scope", u.scope === "all", "All updates", "Also bug fixes and Raspberry Pi updates", () => save({ scope: "all" }))),
+        choice("radio", "scope", u.scope === "sendspin", "Security fixes and Sendspin", "Also installs new Sendspin releases (the player restarts briefly)", () => save({ scope: "sendspin" })),
+        choice("radio", "scope", u.scope === "all", "Everything", "Also bug fixes, Raspberry Pi updates and Sendspin", () => save({ scope: "all" }))),
       h("div", { class: "group" }, h("div", { class: "group-title" }, "Restarting"),
         choice("checkbox", "reboot", u.reboot, "Restart if an update needs it", "Music stops for about a minute", i => save({ reboot: i.checked })),
         u.reboot ? h("div", { class: "opt-time" }, "Restart at ", t) : null),

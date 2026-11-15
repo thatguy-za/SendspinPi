@@ -297,7 +297,8 @@ def updates_save(h, q, body):
 
 @route("POST", "/api/updates/run")
 def updates_run(h, q, body):
-    return _start("Install updates now", updates.run_now_steps(), system.APT_ENV)
+    steps, env = updates.run_now()
+    return _start("Install updates now", steps, env)
 
 
 @route("GET", "/api/selfupdate")
@@ -548,5 +549,6 @@ def main():
     threading.Thread(target=wifi.hotspot_loop, daemon=True).start()
     threading.Thread(target=bluetooth.watchdog_loop, daemon=True).start()
     threading.Thread(target=selfupdate.auto_loop, daemon=True).start()
+    threading.Thread(target=updates.sendspin_loop, daemon=True).start()
     ThreadingHTTPServer.daemon_threads = True
     ThreadingHTTPServer(("", port), Handler).serve_forever()
